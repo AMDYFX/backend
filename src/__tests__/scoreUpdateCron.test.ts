@@ -74,6 +74,8 @@ jest.mock("../config", () => ({
   },
 }));
 
+import { recordScoreHistory } from "../lib/history";
+import { triggerWebhooks } from "../lib/webhooks";
 import { runHourlyScoreUpdate } from "../lib/scoreUpdateCron";
 import { resetIdempotencyState } from "../lib/scoreService";
 import { getTotalProjects, updateImpactScore, RpcDegradedError } from "../lib/registry";
@@ -168,5 +170,14 @@ describe("runHourlyScoreUpdate (cron job execution flow)", () => {
 
     expect(markFailed).not.toHaveBeenCalled();
     expect(recordCronRun).toHaveBeenCalledWith("score-update", "success");
+  });
+
+  it("invokes recordScoreHistory and triggerWebhooks exactly once per successful update (Issue #531)", async () => {
+    (getTotalProjects as jest.Mock).mockResolvedValue(1);
+
+    await runHourlyScoreUpdate();
+
+    expect(recordScoreHistory).toHaveBeenCalledTimes(1);
+    expect(triggerWebhooks).toHaveBeenCalledTimes(1);
   });
 });
