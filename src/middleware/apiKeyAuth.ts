@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { resolveAuthContext, incrementUsage } from "../lib/apiKeys";
 import { validateApiKey, incrementUsage, isRateLimited } from "../lib/apiKeys";
 import { timingSafeCompare } from "../lib/timing-safe";
 import { errorBody } from "./errors";
@@ -12,22 +13,24 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export function apiKeyAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  const apiKeyHeader = req.headers["x-api-key"];
-  let providedKey = "";
+  const auth = resolveAuthContext(req.headers);
 
-  if (apiKeyHeader && typeof apiKeyHeader === "string") {
-    providedKey = apiKeyHeader;
-  } else if (authHeader && authHeader.startsWith("Bearer ")) {
-    providedKey = authHeader.substring(7);
-  }
-
-  // Fallback / support for existing ADMIN_API_KEY (constant-time comparison)
-  const adminKey = process.env.ADMIN_API_KEY;
-  if (adminKey && timingSafeCompare(providedKey, adminKey)) {
+  if (auth.isAdmin) {
     return next();
   }
 
+  if (!auth.providedKey) {
+    return res.status(401).json({
+      error: "unauthorized",
+      message: "Missing API key in Authorization bearer token or X-API-Key header",
+    });
+  }
+
+  if (auth.rateLimited) {
+    return res.status(429).json({
+      error: "too_many_requests",
+      message: "Rate limit exceeded for this API key. Please retry later.",
+    });
   if (!providedKey) {
     return res
       .status(401)
@@ -53,14 +56,21 @@ export function apiKeyAuth(req: AuthenticatedRequest, res: Response, next: NextF
       );
   }
 
+  if (!auth.isConsumer || !auth.keyRecord) {
+    return res.status(401).json({
+      error: "unauthorized",
+      message: "Invalid or revoked API key",
+    });
+  }
+
   // Increment usage
-  incrementUsage(apiKeyRecord.id);
+  incrementUsage(auth.keyRecord.id);
 
   // Attach metadata
   req.apiKeyInfo = {
-    id: apiKeyRecord.id,
-    consumer_name: apiKeyRecord.consumer_name,
-    rate_limit: apiKeyRecord.rate_limit,
+    id: auth.keyRecord.id,
+    consumer_name: auth.keyRecord.consumer_name,
+    rate_limit: auth.keyRecord.rate_limit,
   };
 
   next();
