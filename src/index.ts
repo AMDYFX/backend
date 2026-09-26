@@ -41,7 +41,7 @@ import { isErrorRateLimited } from "./lib/error-limiter";
 import { isRpcOutageExtended, isRpcAvailable, getRpcStatus } from "./lib/stellar";
 import {
   getQueueSize,
-  dequeue,
+  getQueueSnapshot,
   remove,
   incrementRetry,
   hasExceededMaxRetries,
@@ -440,10 +440,16 @@ scheduleCron(
     const maxRetries = 10;
     const processed: number[] = [];
 
-    while (getQueueSize() > 0) {
-      const item = dequeue();
-      if (!item) break;
-
+    // Snapshot the queue once and make a single pass over it. Each item gets
+    // at most one attempt per cron tick: on success (or a detected duplicate)
+    // it is removed; on failure it is left in the queue (with its retry
+    // count bumped in place) so the *next* 5-minute tick retries it, instead
+    // of hot-looping the same failing item synchronously in this run.
+    //
+    // Items are only ever removed from the queue on success, on a detected
+    // duplicate, or once they've exceeded MAX_RETRIES — never merely because
+    // an attempt was made (see #532).
+    for (const item of getQueueSnapshot()) {
       try {
         const solar = getSolarData(item.projectId);
         const satellite = await fetchSatelliteWithFallback(item.projectId);
@@ -466,6 +472,7 @@ scheduleCron(
             fresh.green_impact,
             idempotencyKey,
           );
+          remove(item.projectId);
           processed.push(item.projectId);
           logger.info(
             `[cron] tx-queue: project ${item.projectId} retried successfully tx=${tx_hash}`,
@@ -490,7 +497,7 @@ scheduleCron(
             remove(item.projectId);
           } else {
             logger.warn(
-              `[cron] tx-queue: project ${item.projectId} retry failed (attempt ${item.retryCount + 1}), will retry`,
+              `[cron] tx-queue: project ${item.projectId} retry failed (attempt ${item.retryCount}), will retry`,
             );
           }
         }
