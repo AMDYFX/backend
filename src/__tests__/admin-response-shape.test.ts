@@ -36,7 +36,7 @@ function buildApp(): Express {
   return app;
 }
 
-const authHeader = { Authorization: "Bearer test-key" };
+const authHeader = { Authorization: "Bearer test-key",  "x-request-timestamp": Date.now().toString() };
 
 describe("admin /update-scores response shape", () => {
   let app: Express;

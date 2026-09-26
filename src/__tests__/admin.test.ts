@@ -36,7 +36,8 @@ function buildApp(): Express {
   return app;
 }
 
-const AUTH_HEADER = { Authorization: "Bearer test-key" };
+const AUTH_HEADER = { Authorization: "Bearer test-key", "x-request-timestamp": Date.now().toString() };
+
 
 describe("admin routes", () => {
   let app: Express;
@@ -148,6 +149,7 @@ describe("admin routes", () => {
       const res = await request(app)
         .post("/api/admin/update-scores")
         .set("Authorization", "Bearer test-key ")
+        .set("x-request-timestamp", Date.now().toString())
         .send({});
       expect(res.status).toBe(200);
     });

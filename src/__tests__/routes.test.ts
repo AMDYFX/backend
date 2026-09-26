@@ -22,7 +22,7 @@ jest.mock("../config", () => {
 });
 
 const ADMIN_API_KEY = "test-key";
-const authHeader = { Authorization: `Bearer ${ADMIN_API_KEY}` };
+const authHeader = { Authorization: `Bearer ${ADMIN_API_KEY}`,  "x-request-timestamp": Date.now().toString()};
 
 function buildApp(): Express {
   const app = express();
