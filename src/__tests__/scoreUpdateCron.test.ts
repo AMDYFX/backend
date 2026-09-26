@@ -75,20 +75,21 @@ jest.mock("../config", () => ({
 }));
 
 import { runHourlyScoreUpdate } from "../lib/scoreUpdateCron";
+import { resetIdempotencyState } from "../lib/scoreService";
 import { getTotalProjects, updateImpactScore, RpcDegradedError } from "../lib/registry";
 import { getSolarData } from "../lib/iot";
 import { fetchSatelliteWithFallback } from "../lib/satellite-sources";
 import { computeScores } from "../lib/scoring";
 import { recordCronRun } from "../lib/health";
 import { markFailed } from "../lib/duplicate-detection";
-import { resetIdempotencyState } from "../lib/scoreService";
-import { clearIdempotencyStore } from "../lib/idempotency";
 
 describe("runHourlyScoreUpdate (cron job execution flow)", () => {
   beforeEach(() => {
+    // scoreService.updateScoreForProject is left real, so its module-level
+    // idempotency map must be cleared between runs or later tests get rejected
+    // as duplicates of earlier ones in the same file.
     resetIdempotencyState();
     jest.clearAllMocks();
-    clearIdempotencyStore(); // prevent key bleed between tests
     (getSolarData as jest.Mock).mockReturnValue({
       efficiency_pct: 85,
       power_output_kw: 500,

@@ -1,11 +1,11 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { getTotalProjects } from "../lib/registry";
-import { updateScoreForProject } from "../lib/scoreService";
-import { badRequest, errorBody, parseOptionalInt, MAX_PROJECT_ID } from "../middleware/errors";
+import { badRequest, errorBody, parseOptionalInt, maxProjectId } from "../middleware/errors";
 import { recordAudit, getAuditLog, auditToCsv } from "../lib/audit";
 import { broadcastScoreUpdate } from "../lib/websocket";
 import { tryBeginUpdate, markCompleted, markFailed } from "../lib/duplicate-detection";
 import { withProjectLock } from "../lib/request-queue";
+import { updateScoreForProject } from "../lib/scoreService";
 import { config } from "../config";
 import { logger } from "../lib/logger";
 import { timingSafeCompare } from "../lib/timing-safe";
@@ -116,17 +116,15 @@ function parseProjectIds(body: unknown): number[] | null {
   if (raw.length === 0) return null;
 
   const projectIds: number[] = [];
+  const max = maxProjectId();
   for (const entry of raw) {
     if (!isPositiveInteger(entry)) {
       throw badRequest("project_ids must contain only positive integers");
     }
-    if (entry > MAX_PROJECT_ID) {
-      throw badRequest(`project_ids must not exceed maximum project id ${MAX_PROJECT_ID}`);
+    if (entry > max) {
+      throw badRequest(`project_ids must not exceed maximum project id ${max}`);
     }
     projectIds.push(entry);
-  }
-  if (!raw.every((n) => (n as number) <= MAX_PROJECT_ID)) {
-    throw badRequest(`project_ids must not exceed maximum project id ${MAX_PROJECT_ID}`);
   }
   return projectIds;
 }
