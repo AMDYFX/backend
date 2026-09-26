@@ -1,7 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/apiKeyAuth";
-import { clearApiKeys, generateApiKey, validateApiKey } from "../lib/apiKeys";
+import { clearApiKeys, generateApiKey, rotateApiKey, validateApiKey } from "../lib/apiKeys";
+import * as timingSafeLib from "../lib/timing-safe";
 import apiKeysRouter from "../routes/apiKeys";
 
 describe("API Key Management and Authentication", () => {
@@ -145,6 +146,43 @@ describe("API Key Management and Authentication", () => {
           message: "Rate limit exceeded for this API key. Please retry later.",
         },
       });
+    });
+  });
+
+  describe("validateApiKey constant-time comparison", () => {
+    const timingSafeCompareSpy = jest.spyOn(timingSafeLib, "timingSafeCompare");
+
+    afterAll(() => {
+      timingSafeCompareSpy.mockRestore();
+    });
+
+    it("compares the active key using timingSafeCompare", () => {
+      const key = generateApiKey("Consumer", 100);
+
+      const result = validateApiKey(key.key);
+
+      expect(result).not.toBeNull();
+      expect(timingSafeCompareSpy).toHaveBeenCalledWith(key.key, key.key);
+    });
+
+    it("compares the grace-period old key using timingSafeCompare", () => {
+      const key = generateApiKey("Consumer", 100);
+      const oldKey = key.key;
+      rotateApiKey(key.id, 60 * 60 * 1000);
+
+      const result = validateApiKey(oldKey);
+
+      expect(result).not.toBeNull();
+      expect(timingSafeCompareSpy).toHaveBeenCalledWith(oldKey, oldKey);
+    });
+
+    it("calls timingSafeCompare when the provided key does not match", () => {
+      const key = generateApiKey("Consumer", 100);
+
+      const result = validateApiKey("hk_live_incorrect");
+
+      expect(result).toBeNull();
+      expect(timingSafeCompareSpy).toHaveBeenCalledWith(key.key, "hk_live_incorrect");
     });
   });
 });
