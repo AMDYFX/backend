@@ -51,6 +51,13 @@ export async function runHourlyScoreUpdate(): Promise<void> {
             return;
           }
 
+          if (scoreResult.status === "skipped") {
+            logger.warn(`[cron] project ${projectId}: skipped on-chain update (${scoreResult.reason})`);
+            markCompleted(projectId);
+            resetErrorRateLimit(`cron:project-${projectId}`);
+            return;
+          }
+
           if (scoreResult.status === "error") {
             throw new Error(scoreResult.error);
           }
