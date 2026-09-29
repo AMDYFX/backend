@@ -61,6 +61,14 @@ Configurable environment variables (see [`.env.example`](./.env.example)):
 All current routes are mounted under the `/v1` prefix.
 Legacy unversioned `/api/*` routes are deprecated and maintained for backward compatibility until 2027-01-01. Responses on `/api/*` include `Deprecation: true` and sunset warning headers.
 
+### Migration: `/api/*` → `/v1/*`
+
+Replace the `/api` prefix with `/v1` (e.g. `/api/projects` → `/v1/projects`). Notes:
+
+- Auth is not identical between the two mounts (for example `/api/portfolio` requires an API key while `/v1/portfolio` does not; admin routes on `/v1` additionally require request signing). Follow the `/v1` requirements.
+- Legacy traffic is counted in the Prometheus metric `legacy_api_requests_total{path}`; check it to find remaining callers.
+- On and after **2027-01-01T00:00:00Z** every `/api/*` request returns `410 Gone` with a `Link: </v1/...>; rel="successor-version"` header and a JSON body pointing at the `/v1` equivalent. The mounts are then deleted; see [docs/LEGACY_API_REMOVAL.md](docs/LEGACY_API_REMOVAL.md).
+
 ---
 
 ## Route Groups Index

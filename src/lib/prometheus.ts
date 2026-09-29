@@ -21,6 +21,14 @@ export const httpRequestsTotal = new client.Counter({
   registers: [register],
 });
 
+// ── Legacy API usage (#660) ─────────────────────────────────────────────────
+export const legacyApiRequestsTotal = new client.Counter({
+  name: "legacy_api_requests_total",
+  help: "Requests to the deprecated unversioned /api/* routes",
+  labelNames: ["path"] as const,
+  registers: [register],
+});
+
 // ── Stellar RPC metrics ─────────────────────────────────────────────────────
 export const stellarRpcDuration = new client.Histogram({
   name: "stellar_rpc_call_duration_seconds",

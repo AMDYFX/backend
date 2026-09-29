@@ -131,10 +131,6 @@ router.post("/", async (req: Request, res: Response) => {
   // SSRF guard: only allow http/https URLs that resolve to public addresses.
   let validatedUrl: string;
   try {
-     
-    new URL(fetchUrl);
-  } catch {
-    return res.status(400).json({ error: "fetchUrl must be a valid URL" });
     validatedUrl = await validatePublicUrl(fetchUrl);
   } catch (err) {
     return res

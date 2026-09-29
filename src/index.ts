@@ -27,6 +27,7 @@ import forecastRouter from "./routes/forecast";
 import maintenanceRouter from "./routes/maintenance";
 import investorRouter from "./routes/investor";
 import apiKeysRouter from "./routes/apiKeys";
+import notificationsRouter, { publicNotificationsRouter } from "./routes/notifications";
 import { createHandler } from "graphql-http/lib/use/express";
 import { graphqlSchema, graphqlRoot, createGraphQLContext } from "./graphql/schema";
 import { startGrpcServer } from "./grpc/server";
@@ -59,7 +60,7 @@ import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { sanitizeInputs } from "./middleware/sanitize";
 import { securityHeaders, permissionsHeaders } from "./middleware/securityHeaders";
 import { publicLimiter, adminLimiter, parseTrustProxy } from "./middleware/rateLimit";
-import { versionHeaders, acceptVersion, deprecationHeaders } from "./middleware/versioning";
+import { versionHeaders, acceptVersion, deprecationHeaders, legacyApiUsage } from "./middleware/versioning";
 import { runWithCorrelationId, generateCorrelationId } from "./lib/correlation";
 import { logger } from "./lib/logger";
 import { getTraces, getTraceSummary } from "./lib/tracer";
@@ -341,10 +342,12 @@ v1.use("/forecast", publicLimiter, forecastRouter);
 v1.use("/maintenance", publicLimiter, apiKeyAuth, maintenanceRouter);
 v1.use("/investor", publicLimiter, investorRouter);
 v1.use("/admin/api-keys", ipWhitelist, adminLimiter, requestSigning, apiKeysRouter);
+v1.use("/notifications", publicLimiter, publicNotificationsRouter); // email-link targets (confirm/unsubscribe)
+v1.use("/notifications", publicLimiter, apiKeyAuth, notificationsRouter);
 
 // ── Legacy /api paths (deprecated) ──────────────────────────────────────────
 // Kept for backward compatibility; will be removed after 2027-01-01.
-app.use("/api", deprecationHeaders, versionHeaders);
+app.use("/api", legacyApiUsage(), deprecationHeaders, versionHeaders);
 app.use("/api/iot", publicLimiter, apiKeyAuth, iotRouter);
 app.use("/api/admin", ipWhitelist, adminLimiter, adminRouter);
 app.use("/api/admin/batch", ipWhitelist, adminLimiter, batchRouter);
