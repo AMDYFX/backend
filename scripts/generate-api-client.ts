@@ -215,6 +215,9 @@ The client version follows the backend's OpenAPI spec version (info.version).
 
     writeFileSync(resolve(clientPackageRoot, "README.md"), readme, "utf-8");
 
+    // Match the repo's formatting so regenerated files are byte-identical to committed ones.
+    runCommand(`bunx prettier --write "${clientSrcDir}/*.ts"`, projectRoot);
+
     console.log("✅ API client package generated at packages/api-client");
     console.log("📝 Next: bun run api-client:build");
   } catch (error) {
