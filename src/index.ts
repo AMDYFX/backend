@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import cron, { ScheduledTask } from "node-cron";
+import * as grpc from "@grpc/grpc-js";
 import { config, initEnv } from "./config";
 import { getTotalProjects } from "./lib/registry";
 import swaggerUi from "swagger-ui-express";
@@ -80,6 +81,23 @@ import { createBenchmarkSampleInitializer } from "./lib/benchmarkStartup";
 import { getImpactCertificatePublicKey } from "./lib/impactCertificate";
 
 const env = initEnv();
+
+// ── Process-level error handlers (#694) ──────────────────────────────────────
+// These handlers must be registered early (before any async work) to catch
+// unhandled promise rejections and uncaught exceptions that would otherwise
+// crash the process silently or with only a deprecation warning.
+process.on("unhandledRejection", (reason: unknown, promise: Promise<unknown>) => {
+  logger.error("[unhandledRejection] Unhandled promise rejection detected", {
+    ...logger.formatError(reason),
+    promise: String(promise),
+  });
+  gracefulShutdown("unhandledRejection").catch(() => process.exit(1));
+});
+
+process.on("uncaughtException", (err: Error) => {
+  logger.error("[uncaughtException] Uncaught exception detected", logger.formatError(err));
+  process.exit(1);
+});
 
 // Seed initial admin from env var (RBAC bootstrap)
 const initialAdminUserId = process.env.INITIAL_ADMIN_USER_ID?.trim();
@@ -494,20 +512,53 @@ const initializeBenchmarkSamples = createBenchmarkSampleInitializer({
   warn: logger.warn,
 });
 
-const serverPromise = initializeBenchmarkSamples().then((sampleSize) => {
+// ── Coordinated server startup (#692) ────────────────────────────────────────
+// Start both gRPC and HTTP servers in a coordinated way so that if either fails
+// to bind, the other is properly cleaned up. This prevents half-initialized state
+// where gRPC is running but HTTP isn't (or vice versa).
+let grpcServer: grpc.Server | null = null;
+
+const serverPromise = initializeBenchmarkSamples().then(async (sampleSize) => {
   logger.info("[startup] benchmark samples initialized", { sample_size: sampleSize });
 
-  const server = app.listen(PORT, () => {
-    logger.info(`Heliobond backend listening on port ${PORT}`);
+  // First, start HTTP server
+  const httpServer = await new Promise<any>((resolve, reject) => {
+    const server = app.listen(PORT, () => {
+      logger.info(`[startup] HTTP server listening on port ${PORT}`);
+      resolve(server);
+    });
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      logger.error("[startup] HTTP server bind failed", logger.formatError(err));
+      reject(err);
+    });
   });
 
-  // Bind failures (EADDRINUSE, EACCES, …) surface here instead of as an uncaught
-  // exception with a raw stack trace. Exits 1 so supervisors treat it as a failure.
-  server.on("error", (err: NodeJS.ErrnoException) => handleListenError(err, PORT));
+  // Then start gRPC server
+  try {
+    grpcServer = await new Promise<grpc.Server>((resolve, reject) => {
+      const server = startGrpcServer(50051, (err, port) => {
+        logger.error("[startup] gRPC server bind failed", {
+          ...logger.formatError(err),
+          port,
+        });
+        // Clean up HTTP server if gRPC fails
+        httpServer.close(() => {
+          logger.info("[startup] HTTP server closed due to gRPC bind failure");
+        });
+        reject(err);
+      });
+      // Give gRPC server a moment to bind before considering it successful
+      setTimeout(() => resolve(server), 100);
+    });
+    logger.info("[startup] gRPC server started successfully");
+  } catch (err) {
+    logger.error("[startup] coordinated startup failed, exiting");
+    process.exit(1);
+  }
 
   // Real-time score updates over WebSocket (ws://<host>/ws)
-  attachWebSocketServer(server);
-  return server;
+  attachWebSocketServer(httpServer);
+  return httpServer;
 });
 
 // GraphQL endpoint and playground setup
@@ -556,9 +607,6 @@ app.get("/graphql-playground", (req, res) => {
   `);
 });
 
-// Start high-performance gRPC server
-const grpcServer = startGrpcServer(50051);
-
 // Periodically clear cached secrets so a rotated/compromised upstream
 // secret doesn't stay cached indefinitely (gated on SECRETS_ROTATION_ENABLED).
 startSecretRotation();
@@ -604,23 +652,25 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
     // 5. Gracefully stop the gRPC server, letting in-flight/streaming RPCs
     // (e.g. StreamProjectScores) drain instead of being killed mid-stream.
-    logger.info("[shutdown] draining gRPC server…");
-    await new Promise<void>((resolve) => {
-      const forceTimer = setTimeout(() => {
-        logger.warn("[shutdown] gRPC drain timed out, forcing shutdown");
-        grpcServer.forceShutdown();
-        resolve();
-      }, shutdownTimeoutMs);
-      grpcServer.tryShutdown((err) => {
-        clearTimeout(forceTimer);
-        if (err) {
-          logger.error("[shutdown] gRPC shutdown error", { error: err.message });
-        } else {
-          logger.info("[shutdown] gRPC server stopped");
-        }
-        resolve();
+    if (grpcServer) {
+      logger.info("[shutdown] draining gRPC server…");
+      await new Promise<void>((resolve) => {
+        const forceTimer = setTimeout(() => {
+          logger.warn("[shutdown] gRPC drain timed out, forcing shutdown");
+          grpcServer!.forceShutdown();
+          resolve();
+        }, shutdownTimeoutMs);
+        grpcServer!.tryShutdown((err) => {
+          clearTimeout(forceTimer);
+          if (err) {
+            logger.error("[shutdown] gRPC shutdown error", { error: err.message });
+          } else {
+            logger.info("[shutdown] gRPC server stopped");
+          }
+          resolve();
+        });
       });
-    });
+    }
 
     logger.info("[shutdown] clean exit");
     process.exit(0);
