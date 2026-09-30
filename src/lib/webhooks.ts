@@ -2,7 +2,7 @@ import { createHmac } from "crypto";
 import { withRetry } from "./retry";
 import { logger } from "./logger";
 import { validatePublicUrl } from "./ssrf";
-import { parseContractError } from "./contractErrors";
+import { parseContractError, isRecord } from "./contractErrors";
 
 /**
  * SSRF guard for webhook URLs — see {@link validatePublicUrl}.
@@ -71,17 +71,14 @@ async function deliverOnce(url: string, body: string, signature: string): Promis
 }
 
 function enrichWebhookPayload(payload: unknown): unknown {
-  if (payload && typeof payload === "object") {
-    const p = payload as Record<string, unknown>;
-    if (typeof p.error === "string" && !p.contract_error_name) {
-      const decoded = parseContractError(p.error);
-      if (decoded) {
-        return {
-          ...p,
-          contract_error_name: decoded.name,
-          contract_error_code: decoded.code,
-        };
-      }
+  if (isRecord(payload) && typeof payload.error === "string" && !payload.contract_error_name) {
+    const decoded = parseContractError(payload.error);
+    if (decoded) {
+      return {
+        ...payload,
+        contract_error_name: decoded.name,
+        contract_error_code: decoded.code,
+      };
     }
   }
   return payload;

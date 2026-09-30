@@ -1,7 +1,7 @@
 /**
  * Soroban contract error decoding and retry classification.
  *
- * Contract panics reach the backend as strings such as `HostError: Error(Contract, #22)`.
+ * Contract panics reach the backend in string form, for example `HostError: Error(Contract, #22)`.
  * This module parses the error code and decodes it against the registry and vault
  * error tables loaded from a shared JSON source of truth (`src/data/contractErrors.json`).
  */
@@ -33,13 +33,21 @@ export interface DecodedContractError {
   description: string;
 }
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isContractErrorTable(value: unknown): value is ContractErrorTable {
+  return isRecord(value) && isRecord(value.registry) && isRecord(value.vault);
+}
+
 /**
  * Typed loader for contract error codes table.
- * Asserts the loaded JSON matches ContractErrorTable shape.
+ * Validates the loaded JSON matches ContractErrorTable shape.
  */
 export function loadContractErrorTable(): ContractErrorTable {
-  const table = contractErrorsData as unknown as ContractErrorTable;
-  if (!table || typeof table !== "object" || !table.registry) {
+  const table: unknown = contractErrorsData;
+  if (!isContractErrorTable(table)) {
     throw new Error("Invalid contract error table JSON structure");
   }
   return table;
@@ -101,12 +109,13 @@ function extractErrorString(err: unknown): string {
 
   if (err instanceof Error) {
     const parts = [err.message];
-    const anyErr = err as unknown as Record<string, unknown>;
-    if (typeof anyErr.error === "string") parts.push(anyErr.error);
-    if (typeof anyErr.errorResult === "string") parts.push(anyErr.errorResult);
-    if (anyErr.errorResult && typeof anyErr.errorResult === "object") {
+    const error: unknown = Reflect.get(err, "error");
+    const errorResult: unknown = Reflect.get(err, "errorResult");
+    if (typeof error === "string") parts.push(error);
+    if (typeof errorResult === "string") parts.push(errorResult);
+    if (isRecord(errorResult)) {
       try {
-        parts.push(JSON.stringify(anyErr.errorResult));
+        parts.push(JSON.stringify(errorResult));
       } catch {
         // ignore circular
       }
@@ -114,18 +123,15 @@ function extractErrorString(err: unknown): string {
     return parts.join(" ");
   }
 
-  if (typeof err === "object") {
-    const e = err as Record<string, unknown>;
+  if (isRecord(err)) {
+    const e = err;
     const parts: string[] = [];
     if (typeof e.message === "string") parts.push(e.message);
     if (typeof e.error === "string") parts.push(e.error);
     if (typeof e.errorResult === "string") parts.push(e.errorResult);
     if (typeof e.statusText === "string") parts.push(e.statusText);
 
-    if (e.result && typeof e.result === "object") {
-      const res = e.result as Record<string, unknown>;
-      if (typeof res.error === "string") parts.push(res.error);
-    }
+    if (isRecord(e.result) && typeof e.result.error === "string") parts.push(e.result.error);
 
     try {
       parts.push(JSON.stringify(e));
