@@ -198,6 +198,11 @@ router.post(
                 };
               }
 
+              if (scoreResult.status === "skipped") {
+                markCompleted(projectId);
+                return { skipped: true, reason: scoreResult.reason };
+              }
+
               if (scoreResult.status === "error") {
                 if (scoreResult.error.includes("duplicate submission rejected")) {
                   markCompleted(projectId);
