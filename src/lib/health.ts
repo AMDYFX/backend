@@ -48,9 +48,8 @@ export async function getHealth(): Promise<HealthReport> {
   try {
     await dbPool.query("SELECT 1");
     dbConnected = true;
-  } catch (err) {
-    // Log error but don't throw - health check should report status, not fail
-    dbConnected = false;
+  } catch {
+    // health check should report status, not fail
   }
 
   return {
@@ -90,13 +89,12 @@ export function getReadiness(): ReadinessReport {
   const rpcCircuitReady = rpcBreaker.getState() !== "OPEN";
 
   // Check PostgreSQL connectivity for readiness (#699)
+  // Synchronous check not possible, so we rely on pool state
   let dbReady = false;
   try {
-    // Synchronous check not possible, so we rely on pool state
-    // A more robust approach would cache the last check result
     dbReady = dbPool.totalCount > 0;
   } catch {
-    dbReady = false;
+    // leave false
   }
 
   return {
