@@ -1,6 +1,4 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { badRequest, parseOptionalInt, MAX_PROJECT_ID } from "../middleware/errors";
-import { getTotalProjects } from "../lib/registry";
 import { badRequest, errorBody, parseOptionalInt, maxProjectId } from "../middleware/errors";
 import { recordAudit, getAuditLog, auditToCsv } from "../lib/audit";
 import { broadcastScoreUpdate } from "../lib/websocket";
@@ -9,11 +7,8 @@ import { withProjectLock } from "../lib/request-queue";
 import { updateScoreForProject } from "../lib/scoreService";
 import { getTotalProjects } from "../lib/registry";
 import { logger } from "../lib/logger";
-import {
-  requireApiKeyRole,
-  extractApiKeyRole,
-  requireApiKeyAuth,
-} from "../middleware/requireApiKeyRole";
+import { config } from "../config";
+import { requireApiKeyRole, extractApiKeyRole } from "../middleware/requireApiKeyRole";
 import { timingSafeCompare } from "../lib/timing-safe";
 
 const router = Router();
@@ -59,10 +54,17 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   }
   // Constant-time compare so response timing can't be used to guess the key.
   const authorization = req.headers.authorization ?? "";
-  if (!timingSafeCompare(authorization, `Bearer ${apiKey}`)) {
-    return res.status(401).json(errorBody("unauthorized", "Missing or invalid bearer token"));
+  if (timingSafeCompare(authorization, `Bearer ${apiKey}`)) {
+    req.apiKeyRole = "admin:write";
+    return next();
   }
-  next();
+  // Other keys (e.g. read-only ones from ADMIN_API_KEYS) authenticate via the role registry.
+  extractApiKeyRole(req, res, () => {
+    if (!req.apiKeyRole) {
+      return res.status(401).json(errorBody("unauthorized", "Missing or invalid bearer token"));
+    }
+    next();
+  });
 });
 
 // Timestamp expiration validation (Issue #545)
@@ -81,13 +83,14 @@ router.use((req: Request, res: Response, next: NextFunction) => {
 
   const ageMs = Math.abs(Date.now() - clientTime);
   if (ageMs > config.ADMIN_REQUEST_MAX_AGE_MS) {
-    logger.warn(`[admin] Request expired. Age: ${ageMs}ms, Max allowed: ${config.ADMIN_REQUEST_MAX_AGE_MS}ms`);
+    logger.warn(
+      `[admin] Request expired. Age: ${ageMs}ms, Max allowed: ${config.ADMIN_REQUEST_MAX_AGE_MS}ms`,
+    );
     return res.status(401).json(errorBody("unauthorized", "Request expired"));
   }
 
   next();
 });
-
 
 /** A per-project score update that made it onto the ledger (or was deferred). */
 type ScoreUpdateResult = {
@@ -146,12 +149,6 @@ function parseProjectIds(body: unknown): number[] | null {
   return projectIds;
 }
 
-router.post(
-  "/update-scores",
-  requireApiKeyRole("admin:write"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const requested = parseProjectIds(req.body);
 // POST /api/admin/update-scores
 // Body: { project_ids?: number[] }  — defaults to all projects
 // Returns: { updated: number, results: [...], errors: [...], skipped: [...] }
@@ -160,19 +157,12 @@ router.post(
 // forwarded to the central errorHandler via next() so status codes stay consistent
 // across all endpoints. The nested per-project catch is intentional: it collects
 // partial failures without aborting the entire batch.
-router.post("/update-scores", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const requested = parseProjectIds(req.body);
-
-    let projectIds: number[];
-
-    if (requested) {
-      projectIds = requested;
-    } else {
-      const total = await getTotalProjects();
-      projectIds = Array.from({ length: total }, (_, i) => i + 1);
-    }
-
+router.post(
+  "/update-scores",
+  requireApiKeyRole("admin:write"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const requested = parseProjectIds(req.body);
       let projectIds: number[];
 
       if (requested) {
@@ -260,22 +250,6 @@ router.post("/update-scores", async (req: Request, res: Response, next: NextFunc
               tx_hash: result.tx_hash,
               credit_quality: result.credit_quality,
               green_impact: result.green_impact,
-            if (scoreResult.status === "error") {
-              // Duplicate submissions are a normal condition, not a failure.
-              if (scoreResult.error.includes("duplicate submission rejected")) {
-                markCompleted(projectId);
-                return { skipped: true, reason: scoreResult.error };
-              }
-              throw new Error(scoreResult.error);
-            }
-
-            markCompleted(projectId);
-            recordAudit({
-              project_id: projectId,
-              credit_quality: scoreResult.creditQuality,
-              green_impact: scoreResult.greenImpact,
-              tx_hash: scoreResult.txHash,
-              triggered_by: "api",
             });
           }
         } catch (err) {
@@ -293,24 +267,15 @@ router.post("/update-scores", async (req: Request, res: Response, next: NextFunc
       res.json({ updated: results.length, results, errors, skipped });
     } catch (error) {
       next(error);
+    }
+  },
+);
+
 /**
  * GET /admin/audit
  * Query: project_id=<int>, from=<unix-ms>, to=<unix-ms>, format=json|csv
  * Returns the immutable audit log of all score updates.
  */
-router.get("/audit", (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const project_id =
-      parseOptionalInt(queryValue(req.query.project_id), "project_id", 0) || undefined;
-    const from = parseOptionalInt(queryValue(req.query.from), "from", 0) || undefined;
-    const to = parseOptionalInt(queryValue(req.query.to), "to", 0) || undefined;
-
-    if (from && to && from > to) {
-      throw badRequest("from must be earlier than to");
-    }
-  },
-);
-
 router.get(
   "/audit",
   requireApiKeyRole("admin:read"),
