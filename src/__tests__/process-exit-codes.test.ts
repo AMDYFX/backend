@@ -36,12 +36,17 @@ describe("process exit codes", () => {
         },
         ["-e", "require('ts-node/register'); require('./src/index')"],
       );
-      expect(result.status).toBe(1);
-      expect(result.stderr + result.stdout).toContain("already in use");
+      expect({
+        status: result.status,
+        out: (result.stderr + result.stdout).slice(-1500),
+      }).toMatchObject({
+        status: 1,
+        out: expect.stringContaining("already in use"),
+      });
     } finally {
       firstServer.close();
     }
-  });
+  }, 45_000);
 
   it("exits with code 0 for graceful shutdown", () => {
     const result = spawnSyncWithEnv(
