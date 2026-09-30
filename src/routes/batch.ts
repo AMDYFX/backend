@@ -8,6 +8,7 @@ import { updateImpactScore, getTotalProjects, RpcDegradedError } from "../lib/re
 import { withProjectLock } from "../lib/request-queue";
 import { tryBeginUpdate, markCompleted, markFailed } from "../lib/duplicate-detection";
 import { badRequest, maxProjectId } from "../middleware/errors";
+import { parseContractError } from "../lib/contractErrors";
 
 const router = Router();
 
@@ -52,6 +53,7 @@ router.post("/score-update", async (req: Request, res: Response) => {
       : DEFAULT_CONCURRENCY;
 
   const job = createJob(projectIds, concurrency);
+  const initialStatus = job.status;
 
   // Fire-and-forget — caller polls /status
   runJob(job, async (projectId) => {
@@ -87,7 +89,14 @@ router.post("/score-update", async (req: Request, res: Response) => {
         return { project_id: projectId, tx_hash, ...scores };
       } catch (err) {
         markFailed(projectId);
-        return { project_id: projectId, error: String(err) };
+        const decoded = parseContractError(err);
+        return {
+          project_id: projectId,
+          error: String(err),
+          ...(decoded
+            ? { contract_error_name: decoded.name, contract_error_code: decoded.code }
+            : {}),
+        };
       }
     });
   }).catch(() => {
@@ -97,7 +106,7 @@ router.post("/score-update", async (req: Request, res: Response) => {
 
   res.status(202).json({
     batch_id: job.id,
-    status: job.status,
+    status: initialStatus,
     total: job.project_ids.length,
     concurrency: job.concurrency,
   });

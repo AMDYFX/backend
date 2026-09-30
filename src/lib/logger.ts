@@ -1,4 +1,5 @@
 import { getCorrelationId } from "./correlation";
+import { parseContractError } from "./contractErrors";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -51,15 +52,25 @@ function emit(level: LogLevel, message: string, meta?: Record<string, unknown>):
 }
 
 function formatError(err: unknown): Record<string, unknown> {
+  const contractErr = parseContractError(err);
+  const contractFields = contractErr
+    ? {
+        contract_error_name: contractErr.name,
+        contract_error_code: contractErr.code,
+        contract_error_source: contractErr.source,
+      }
+    : {};
+
   if (err && typeof err === "object") {
     const e = err as Record<string, unknown>;
     return {
       error_name: String(e.name || "Error"),
       error_message: String(e.message || e),
       error_stack: e.stack ? String(e.stack) : undefined,
+      ...contractFields,
     };
   }
-  return { error: String(err) };
+  return { error: String(err), ...contractFields };
 }
 
 export const logger = {

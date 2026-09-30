@@ -36,8 +36,10 @@ function buildApp(): Express {
   return app;
 }
 
-const AUTH_HEADER = { Authorization: "Bearer test-key", "x-request-timestamp": Date.now().toString() };
-
+const AUTH_HEADER = {
+  Authorization: "Bearer test-key",
+  "x-request-timestamp": Date.now().toString(),
+};
 
 describe("admin routes", () => {
   let app: Express;
@@ -349,6 +351,29 @@ describe("admin routes", () => {
         .expect(400);
 
       expect(res.body.error.code).toBe("bad_request");
+    });
+
+    it("decodes contract errors in update-scores response", async () => {
+      (registry.updateImpactScore as jest.Mock).mockRejectedValueOnce(
+        new Error("HostError: Error(Contract, #8)"),
+      );
+
+      const res = await request(app)
+        .post("/api/admin/update-scores")
+        .set(AUTH_HEADER)
+        .send({ project_ids: [1] })
+        .expect(200);
+
+      expect(res.body.errors).toHaveLength(1);
+      expect(res.body.errors[0]).toMatchObject({
+        project_id: 1,
+        error: {
+          code: "update_failed",
+          message: expect.stringContaining("Error(Contract, #8)"),
+          contract_error_name: "ScoresOutOfRange",
+          contract_error_code: 8,
+        },
+      });
     });
   });
 

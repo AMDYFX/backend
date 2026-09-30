@@ -145,9 +145,7 @@ export async function runHourlyScoreUpdate(): Promise<void> {
     }
   } catch (err) {
     if (!isErrorRateLimited("cron:score-update")) {
-      logger.error("[cron] score update failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.error("[cron] score update failed", logger.formatError(err));
     }
     recordCronRun("score-update", "error");
     endCronTimer();

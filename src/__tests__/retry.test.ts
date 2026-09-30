@@ -11,7 +11,7 @@ jest.mock("../lib/logger", () => ({
 }));
 
 import { logger } from "../lib/logger";
-import { backoffDelay, isTransientError, withRetry } from "../lib/retry";
+import { backoffDelay, extractHttpStatus, isTransientError, withRetry } from "../lib/retry";
 
 const mockedLogger = logger as jest.Mocked<typeof logger>;
 
@@ -59,7 +59,6 @@ describe("isTransientError", () => {
   });
 
   it("returns true for a 503 (service unavailable)", () => {
-    expect(isTransientError(new Error("request failed with status code 503"))).toBe(true);
     expect(isTransientError({ status: 503 })).toBe(true);
   });
 
@@ -68,24 +67,58 @@ describe("isTransientError", () => {
     expect(isTransientError(new Error("ECONNREFUSED"))).toBe(true);
   });
 
-  it("returns false for a 400 (bad request)", () => {
-    expect(isTransientError(new Error("request failed with status code 400"))).toBe(false);
+  it("returns false for a 400 (bad request) in structured fields", () => {
     expect(isTransientError({ status: 400 })).toBe(false);
   });
 
-  it("returns false for a 422 (unprocessable entity)", () => {
-    expect(isTransientError(new Error("request failed with status code 422"))).toBe(false);
+  it("returns false for a 422 (unprocessable entity) in structured fields", () => {
     expect(isTransientError({ status: 422 })).toBe(false);
   });
 
-  it("returns false for a 404 (not found)", () => {
-    expect(isTransientError(new Error("request failed with status code 404"))).toBe(false);
+  it("returns false for a 404 (not found) in structured fields", () => {
     expect(isTransientError({ status: 404 })).toBe(false);
   });
 
   it("reads status off statusCode and response.status too", () => {
     expect(isTransientError({ statusCode: 400 })).toBe(false);
     expect(isTransientError({ response: { status: 404 } })).toBe(false);
+  });
+
+  it("does NOT classify ledger 45123 in error message as HTTP 451", () => {
+    const err = new Error("Transaction failed on ledger 45123");
+    expect(extractHttpStatus(err)).toBeUndefined();
+    expect(isTransientError(err)).toBe(true);
+  });
+
+  it("reads HTTP status only from structured fields, ignoring message text numbers", () => {
+    const err = new Error("request failed with status code 400");
+    expect(extractHttpStatus(err)).toBeUndefined();
+    expect(isTransientError(err)).toBe(true);
+    expect(isTransientError({ ...err, status: 400 })).toBe(false);
+  });
+
+  // ── Contract error retryability classification ─────────────────────────────
+
+  describe("contract error retryability", () => {
+    it("returns false for permanent contract error codes", () => {
+      // ScoresOutOfRange (#8)
+      expect(isTransientError(new Error("HostError: Error(Contract, #8)"))).toBe(false);
+      // ProjectNotFound (#7)
+      expect(isTransientError(new Error("HostError: Error(Contract, #7)"))).toBe(false);
+      // NotWhitelisted (#1)
+      expect(isTransientError(new Error("HostError: Error(Contract, #1)"))).toBe(false);
+      // ProjectArchived (#3)
+      expect(isTransientError(new Error("HostError: Error(Contract, #3)"))).toBe(false);
+      // Unknown (#99)
+      expect(isTransientError(new Error("HostError: Error(Contract, #99)"))).toBe(false);
+    });
+
+    it("returns true for retryable contract error codes", () => {
+      // UpdateTooFrequent (#2) - retry after interval
+      expect(isTransientError(new Error("HostError: Error(Contract, #2)"))).toBe(true);
+      // Paused (#4) - defer
+      expect(isTransientError(new Error("HostError: Error(Contract, #4)"))).toBe(true);
+    });
   });
 });
 
@@ -270,5 +303,27 @@ describe("withRetry", () => {
     expect(delays[1]).toBe(400); // attempt 1 → 400ms
 
     spy.mockRestore();
+  });
+
+  it("does not retry permanent contract errors and throws immediately", async () => {
+    const fn = jest.fn().mockRejectedValue(new Error("HostError: Error(Contract, #8)"));
+    const p = withRetry(fn, { maxAttempts: 4, baseDelayMs: 10, jitter: 0 });
+    await Promise.all([expect(p).rejects.toThrow("Error(Contract, #8)"), jest.runAllTimersAsync()]);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      "[retry] permanent error, not retrying",
+      expect.anything(),
+    );
+  });
+
+  it("retries retryable contract errors", async () => {
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("HostError: Error(Contract, #2)"))
+      .mockResolvedValue("recovered");
+    const p = withRetry(fn, { maxAttempts: 3, baseDelayMs: 10, jitter: 0 });
+    await jest.runAllTimersAsync();
+    await expect(p).resolves.toBe("recovered");
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 });

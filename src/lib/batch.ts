@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { parseContractError } from "./contractErrors";
 
 /**
  * Batch transaction support (#54).
@@ -18,6 +19,8 @@ export interface BatchResult {
   credit_quality?: number;
   green_impact?: number;
   error?: string;
+  contract_error_name?: string;
+  contract_error_code?: number;
   /** Wall-clock ms taken to process this item. */
   duration_ms?: number;
 }
@@ -131,6 +134,13 @@ async function runBatchSequential(
           .then((result) => {
             result.duration_ms = Date.now() - itemStart;
             if (result.error) {
+              if (!result.contract_error_name) {
+                const decoded = parseContractError(result.error);
+                if (decoded) {
+                  result.contract_error_name = decoded.name;
+                  result.contract_error_code = decoded.code;
+                }
+              }
               job.errors.push(result);
             } else {
               job.results.push(result);
@@ -140,9 +150,13 @@ async function runBatchSequential(
             next();
           })
           .catch((err) => {
+            const decoded = parseContractError(err);
             job.errors.push({
               project_id: id,
               error: String(err),
+              ...(decoded
+                ? { contract_error_name: decoded.name, contract_error_code: decoded.code }
+                : {}),
               duration_ms: Date.now() - itemStart,
             });
             job.progress.done++;
@@ -156,7 +170,10 @@ async function runBatchSequential(
   });
 
   const totalMs = Date.now() - jobStart;
-  job.status = job.project_ids.length > 0 && job.errors.length === job.project_ids.length ? "failed" : "completed";
+  job.status =
+    job.project_ids.length > 0 && job.errors.length === job.project_ids.length
+      ? "failed"
+      : "completed";
   job.completed_at = new Date().toISOString();
   job.benchmark = {
     total_ms: totalMs,
