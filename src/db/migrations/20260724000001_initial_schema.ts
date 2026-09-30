@@ -70,37 +70,10 @@ export async function up(knex: Knex): Promise<void> {
     t.timestamps(true, true);
   });
 
-  // ── Vault events (indexer) ──────────────────────────────────────────────
-  await knex.schema.createTable("vault_events", (t) => {
-    t.increments("id").primary();
-    t.bigInteger("ledger").notNullable();
-    t.string("tx_hash", 128).notNullable();
-    t.integer("event_index").notNullable();
-    t.string("type", 64).notNullable();
-    t.string("address", 64).notNullable();
-    t.string("usdc", 64);
-    t.string("shares", 64);
-    t.bigInteger("ts").notNullable();
-    t.timestamps(true, true);
-
-    t.unique(["tx_hash", "event_index"]);
-    t.index(["address", "ledger"]);
-    t.index(["type"]);
-  });
-
-  // ── Indexer cursor ──────────────────────────────────────────────────────
-  await knex.schema.createTable("indexer_cursor", (t) => {
-    t.string("name", 64).primary();
-    t.bigInteger("last_ledger").notNullable().defaultTo(0);
-    t.timestamps(true, true);
-  });
-
   // ── Knex migration tracking is automatic via knex_migrations table ─────
 }
 
 export async function down(knex: Knex): Promise<void> {
-  await knex.schema.dropTableIfExists("indexer_cursor");
-  await knex.schema.dropTableIfExists("vault_events");
   await knex.schema.dropTableIfExists("api_keys");
   await knex.schema.dropTableIfExists("webhooks");
   await knex.schema.dropTableIfExists("audit_log");

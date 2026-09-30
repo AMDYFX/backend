@@ -2,13 +2,18 @@ import { rpc } from "@stellar/stellar-sdk";
 import { withRpcConnection } from "./stellar";
 import { logger } from "./logger";
 import { pool } from "./db";
+import { config } from "../config";
+import { ApiError } from "../middleware/errors";
 import dotenv from "dotenv";
 
 dotenv.config();
 
+export type VaultEventType =
+  "deposit" | "withdraw" | "WithdrawQueued" | "WithdrawClaimed" | "YieldClaimed";
+
 export interface VaultEvent {
   id: string;
-  type: "deposit" | "withdraw";
+  type: VaultEventType;
   address: string;
   amount: number;
   shares: number;
@@ -98,6 +103,16 @@ function extractSourceAccount(tx: any): string | null {
   return null;
 }
 
+function classifyEventType(name: string): VaultEventType | null {
+  const n = name.replace(/[^a-z]/g, "");
+  if (n.includes("yield") && n.includes("claim")) return "YieldClaimed";
+  if (n.includes("withdraw") && n.includes("queue")) return "WithdrawQueued";
+  if (n.includes("withdraw") && n.includes("claim")) return "WithdrawClaimed";
+  if (n.includes("deposit")) return "deposit";
+  if (n.includes("withdraw")) return "withdraw";
+  return null;
+}
+
 function parseVaultEvent(
   rawEvent: unknown,
   sourceAccount: string | null,
@@ -110,12 +125,7 @@ function parseVaultEvent(
     (typeof event.value === "string" ? event.value : undefined);
 
   const normalizedType = typeof candidateType === "string" ? candidateType.toLowerCase() : "";
-  const type: "deposit" | "withdraw" | null = normalizedType.includes("deposit")
-    ? "deposit"
-    : normalizedType.includes("withdraw")
-      ? "withdraw"
-      : null;
-
+  const type = classifyEventType(normalizedType);
   if (!type) return null;
 
   const eventAddress =
@@ -156,7 +166,7 @@ function parseVaultEvent(
         ? eventAddress.trim()
         : null;
   const amount = toNumber(amountValue);
-  const shares = toNumber(sharesValue);
+  const shares = toNumber(sharesValue) ?? (type === "YieldClaimed" ? 0 : null);
 
   if (!address || amount === null || shares === null) {
     return null;
@@ -255,35 +265,11 @@ export interface PendingWithdrawal {
   ts: number;
 }
 
-const ENSURE_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS vault_events (
-  ledger BIGINT NOT NULL,
-  tx_hash TEXT NOT NULL,
-  event_index INTEGER NOT NULL,
-  type TEXT NOT NULL,
-  address TEXT NOT NULL,
-  usdc NUMERIC NOT NULL DEFAULT 0,
-  shares NUMERIC NOT NULL DEFAULT 0,
-  ts BIGINT NOT NULL,
-  PRIMARY KEY (tx_hash, event_index)
-);
-
-CREATE INDEX IF NOT EXISTS idx_vault_events_address_ts
-  ON vault_events (address, ts DESC, tx_hash DESC, event_index DESC);
-
-CREATE INDEX IF NOT EXISTS idx_vault_events_type
-  ON vault_events (type);
-
-CREATE TABLE IF NOT EXISTS vault_indexer_cursor (
-  id TEXT PRIMARY KEY,
-  last_ledger BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
-@;
-
 const CURSOR_ID = "vault";
 
-function decodeCursor(cursor: string | null): { ts: number; txHash: string; eventIndex: number } | null {
+function decodeCursor(
+  cursor: string | null,
+): { ts: number; txHash: string; eventIndex: number } | null {
   if (!cursor) return null;
   try {
     const decoded = Buffer.from(cursor, "base64").toString("utf-8");
@@ -315,32 +301,37 @@ export class EventIndexer {
   };
 
   private isIndexing = false;
-  private schemaReady = false;
 
-  /** Ensure the vault_events + cursor tables exist. Idempotent. */
-  private async ensureSchema(): Promise<void> {
-    if (this.schemaReady) return;
-    await pool.query(ENSURE_SCHEMA_SQL);
-    this.schemaReady = true;
+  /** Persistence needs a configured database, so it is opt-in. */
+  private get persistenceEnabled(): boolean {
+    return config.VAULT_EVENT_INDEXER_ENABLED === "true";
+  }
+
+  private requirePersistence(): void {
+    if (!this.persistenceEnabled) {
+      throw new ApiError(
+        503,
+        "indexer_disabled",
+        "Vault event persistence is disabled (set VAULT_EVENT_INDEXER_ENABLED=true)",
+      );
+    }
   }
 
   /** Read the last processed ledger from the DB. */
   private async loadCursor(): Promise<number> {
-    const res = await pool.query(
-      `SELECT last_ledger FROM vault_indexer_cursor WHERE id = $1`,
-      [CURSOR_ID],
-    );
-    if (res.rowsLength === 0) return 0;
+    const res = await pool.query("SELECT last_ledger FROM indexer_cursor WHERE name = $1", [
+      CURSOR_ID,
+    ]);
+    if (res.rows.length === 0) return 0;
     return Number(res.rows[0].last_ledger);
   }
 
   /** Persist the last processed ledger. */
   private async saveCursor(ledger: number): Promise<void> {
     await pool.query(
-      `INSERT INTO vault_indexer_cursor (id, last_ledger, updated_at)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (id) DO UPDATE SET last_ledger = EXCLUDED.last_ledger, updated_at = EXCLUDED.updated_at`,
-      [CURSOR_ID, ledger, Date.now()],
+      `INSERT INTO indexer_cursor (name, last_ledger) VALUES ($1, $2)
+       ON CONFLICT (name) DO UPDATE SET last_ledger = EXCLUDED.last_ledger, updated_at = now()`,
+      [CURSOR_ID, ledger],
     );
   }
 
@@ -348,7 +339,7 @@ export class EventIndexer {
   private async upsertEvent(event: PersistedVaultEvent): Promise<void> {
     await pool.query(
       `INSERT INTO vault_events (ledger, tx_hash, event_index, type, address, usdc, shares, ts)
-       VALUES ($1, $2, $3, $4, $5, $4, $5, $6)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (tx_hash, event_index) DO NOTHING`,
       [
         event.ledger,
@@ -363,34 +354,26 @@ export class EventIndexer {
     );
   }
 
-  /** Backfill from the configured start ledger to the latest ledger. */
-  async backfill(): Promise<void> {
-    await this.ensureSchema();
-    const startLedger = Number(process.env.VAULT_INDEXER_START_LEDGER || 1);
-    const cursor = await this.loadCursor();
-    if (cursor === 0 && startLedger > 1) {
-      await this.saveCursor(startLedger - 1);
-    }
-    await this.poll();
-  }
-
   async poll(): Promise<void> {
     if (this.isIndexing) return;
     this.isIndexing = true;
 
     try {
-      await this.ensureSchema();
-      const persistedCursor = await this.loadCursor();
-      if (persistedCursor > 0) this.store.cursor = persistedCursor;
+      if (this.persistenceEnabled) {
+        const persistedCursor = await this.loadCursor();
+        if (persistedCursor > 0) this.store.cursor = persistedCursor;
+      }
 
       await withRpcConnection(async (client) => {
-        const startLedger = this.store.cursor || 1;
+        // First run: backfill from the configured start ledger.
+        const startLedger =
+          this.store.cursor || Math.max(config.VAULT_EVENT_INDEXER_START_LEDGER, 1);
         const ledger = await client.getLatestLedger();
         const endLedger = ledger.sequence;
 
         if (endLedger <= startLedger) return;
 
-        // Use getEvents() to enumerate real contract events in the ledge range.
+        // Use getEvents() to enumerate real contract events in the ledger range.
         // getTransaction() requires a 64-char hex transaction hash — passing a
         // ledger sequence number (e.g. "12345678") is not a valid hash and will
         // never match a real transaction, so the old loop silently discovered
@@ -406,7 +389,7 @@ export class EventIndexer {
 
         // Collect unique (txHash, ledger) pairs so we call processTransaction
         // once per transaction, not once per event inside that transaction.
-        const seem = new Map<string, number>();
+        const seen = new Map<string, number>();
         for (const event of rawEvents) {
           const e = event as Record<string, unknown>;
           const txHash =
@@ -422,18 +405,18 @@ export class EventIndexer {
                 ? e.ledgerSequence
                 : null;
 
-          if (txHash && eventLedger !== null && !seem.has(txHash)) {
-            seem.set(txHash, eventLedger);
+          if (txHash && eventLedger !== null && !seen.has(txHash)) {
+            seen.set(txHash, eventLedger);
           }
         }
 
-        for (const [txHash, txLedger] of seem) {
+        for (const [txHash, txLedger] of seen) {
           await this.processTransaction(client, txHash, txLedger);
         }
 
         this.store.cursor = endLedger;
         this.store.lastUpdated = Date.now();
-        await this.saveCursor(endLedger);
+        if (this.persistenceEnabled) await this.saveCursor(endLedger);
       });
     } catch (err) {
       logger.error("[indexer] poll failed", logger.formatError(err));
@@ -445,7 +428,7 @@ export class EventIndexer {
   private async processTransaction(
     client: rpc.Server,
     txHash: string,
-    ledge: number,
+    ledger: number,
   ): Promise<void> {
     try {
       const tx = await client.getTransaction(txHash);
@@ -467,31 +450,33 @@ export class EventIndexer {
       };
 
       // Persist idempotently on (tx_hash, event_index).
-      await this.upsertEvent({
-        ledger,
-        tx_hash: txHash,
-        event_index: 0,
-        type: event.type,
-        address: event.address,
-        usdc: event.amount,
-        shares: event.shares,
-        ts: event.timestamp,
-      });
+      if (this.persistenceEnabled) {
+        await this.upsertEvent({
+          ledger,
+          tx_hash: txHash,
+          event_index: 0,
+          type: event.type,
+          address: event.address,
+          usdc: event.amount,
+          shares: event.shares,
+          ts: event.timestamp,
+        });
+      }
 
+      // The in-memory store only tracks position-changing events; queue, claim
+      // and yield events are persisted for the activity feed but kept out of it.
       const existing = this.store.events.find((e) => e.txHash === txHash);
-      if (!existing) this.store.events.push(event);
+      if (!existing && (event.type === "deposit" || event.type === "withdraw")) {
+        this.store.events.push(event);
+      }
     } catch (err) {
       logger.debug(`[indexer] could not process tx ${txHash}`, logger.formatError(err));
     }
   }
 
   /** Paginated activity for an investor, ordered by ts DESC. */
-  async getActivity(
-    address: string,
-    cursor: string | null,
-    limit: number,
-  ): Promise<ActivityPage> {
-    await this.ensureSchema();
+  async getActivity(address: string, cursor: string | null, limit: number): Promise<ActivityPage> {
+    this.requirePersistence();
     const normalized = address.trim();
     const decoded = decodeCursor(cursor);
     const params: unknown[] = [normalized];
@@ -505,10 +490,10 @@ export class EventIndexer {
       `SELECT ledger, tx_hash, event_index, type, address, usdc, shares, ts
        FROM vault_events WHERE ${where}
        ORDER BY ts DESC, tx_hash DESC, event_index DESC
-       LIMIT I${}`.replace("{}", String(params.length)),
+       LIMIT $${params.length}`,
       params,
     );
-    const rows = res.rows.map((r) => ({
+    const rows = res.rows.map((r: Record<string, unknown>) => ({
       ledger: Number(r.ledger),
       tx_hash: String(r.tx_hash),
       event_index: Number(r.event_index),
@@ -524,21 +509,31 @@ export class EventIndexer {
     return { events: page, next_cursor: nextCursor };
   }
 
-  /** Queued withdrawals: WithdrawQueued without a matching WithdrawClaimed. */
+  /**
+   * Queued withdrawals not yet claimed. The vault gives a queue and its claim
+   * no shared id, so they are paired first-in-first-out per (address, shares):
+   * each WithdrawClaimed settles the oldest matching WithdrawQueued.
+   */
   async getPendingWithdrawals(address: string): Promise<PendingWithdrawal[]> {
-    await this.ensureSchema();
-    const normalized = address.trim();
+    this.requirePersistence();
     const res = await pool.query(
-      `SELECT ledger, tx_hash, address, usdc, shares, ts
-       FROM vault_events
-       WHERE address = $1 AND type = 'WithdrawQueued'
-         AND tx_hash NOT IN (
-           SELECT tx_hash FROM vault_events WHERE address = $1 AND type = 'WithdrawClaimed'
-         )
-       ORDER BY ts DESC, tx_hash DESC`,
-      [normalized],
+      `WITH queued AS (
+         SELECT ledger, tx_hash, address, usdc, shares, ts,
+                ROW_NUMBER() OVER (PARTITION BY shares ORDER BY ts DESC, tx_hash DESC) AS rn,
+                COUNT(*) OVER (PARTITION BY shares) AS total
+         FROM vault_events WHERE address = $1 AND type = 'WithdrawQueued'
+       ), claimed AS (
+         SELECT shares, COUNT(*) AS n
+         FROM vault_events WHERE address = $1 AND type = 'WithdrawClaimed'
+         GROUP BY shares
+       )
+       SELECT q.ledger, q.tx_hash, q.address, q.usdc, q.shares, q.ts
+       FROM queued q LEFT JOIN claimed c ON c.shares = q.shares
+       WHERE q.rn <= q.total - COALESCE(c.n, 0)
+       ORDER BY q.ts DESC, q.tx_hash DESC`,
+      [address.trim()],
     );
-    return res.rows.map((r) => ({
+    return res.rows.map((r: Record<string, unknown>) => ({
       ledger: Number(r.ledger),
       tx_hash: String(r.tx_hash),
       address: String(r.address),

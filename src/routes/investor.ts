@@ -14,12 +14,9 @@ import {
   certificatePdf,
   getImpactCertificatePublicKey,
 } from "../lib/impactCertificate";
-import { indexer } from "../lib/indexer";
 
 const CARBON_OFFSET_FACTOR = 0.05;
 const CARBON_CREDIT_FACTOR = 0.5;
-const DEFAULT_ACTIVITY_LIMIT = 50;
-const MAX_ACTIVITY_LIMIT = 200;
 
 const router = Router();
 
@@ -113,52 +110,6 @@ router.get("/dashboard", async (_req: Request, res: Response, next: NextFunction
   }
 });
 
-// GET /:address/activity — per-investor vault activity feed
-router.get("/:address/activity", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const address = String(req.params.address).trim();
-    if (!address || address.length > 128) throw badRequest("address must be a non-empty wallet address");
-
-    const cursorRaw = req.query.cursor;
-    if (cursorRaw !== undefined && typeof cursorRaw !== "string") {
-      throw badRequest("cursor must be a string");
-    }
-    const cursor = typeof cursorRaw === "string" && cursorRaw.trim() ? cursorRaw.trim() : null;
-
-    const limitRaw = req.query.limit;
-    let limit = DEFAULT_ACTIVITY_LIMIT;
-    if (limitRaw !== undefined) {
-      const parsed = Number(limitRaw);
-      if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_ACTIVITY_LIMIT) {
-        throw badRequest(`limit must be an integer between 1 and ${MAX_ACTIVITY_LIMIT}`);
-      }
-      limit = parsed;
-    }
-
-    const page = await indexer.getActivity(address, cursor, limit);
-    res.json({
-      address,
-      events: page.events,
-      next_cursor: page.next_cursor,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// GET /:address/pending-withdrawals — queued claims not yet claimed
-router.get("/:address/pending-withdrawals", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const address = String(req.params.address).trim();
-    if (!address || address.length > 128) throw badRequest("address must be a non-empty wallet address");
-
-    const pending = await indexer.getPendingWithdrawals(address);
-    res.json({ address, pending_withdrawals: pending });
-  } catch (error) {
-    next(error);
-  }
-});
-
 // GET /:address/impact-certificate — verifiable investor impact certificate
 router.get(
   "/:address/impact-certificate",
@@ -241,7 +192,7 @@ router.get("/financial-summary", async (_req: Request, res: Response, next: Next
 
       // ROI = Net benefit over lifetime / installation cost
       const lifetimeYears = input.project_lifetime_years;
-      const totalBenefits = npvResult.discounted cash flows.reduce(
+      const totalBenefits = npvResult.discounted_cash_flows.reduce(
         (acc, cf) => acc + cf.revenue,
         0,
       );
@@ -309,7 +260,7 @@ router.get("/compliance-report", async (_req: Request, res: Response, next: Next
   try {
     const portfolio = await getPortfolioData();
     const reports = portfolio.map((p) => {
-      // EGG status based on credit quality and green impact
+      // ESG status based on credit quality and green impact
       const score = (p.scores.credit_quality + p.scores.green_impact) / 2;
       let status: "Compliant" | "Warning" | "Non-Compliant" = "Compliant";
       if (score < 50) {
@@ -383,34 +334,82 @@ router.post("/custom-report", async (req: Request, res: Response, next: NextFunc
       }
       const validSections = ["financials", "performance", "compliance", "scores"];
       if (!sections.every((s) => typeof s === "string" && validSections.includes(s))) {
-        throw badRequest(`sections must only contain: ${validSections.join(", ")}`);
+        throw badRequest(`sections must contain only: ${validSections.join(", ")}`);
       }
     }
 
     const portfolio = await getPortfolioData();
-    const selected =
-      Array.isArray(project_ids) && project_ids.length > 0
-        ? portfolio.filter((p) => project_ids.includes(p.id))
-        : portfolio;
+    const filterIds = project_ids as number[] | undefined;
+    const filterSections = (sections as string[] | undefined) ?? ["scores"];
 
-    const result = selected.map((p) => {
-      const out: Record<string, unknown> = { project_id: p.id };
-      if (!sections || sections.includes("financials")) {
-        out.funding = p.funding;
+    const filteredPortfolio = filterIds
+      ? portfolio.filter((p) => filterIds.includes(p.id))
+      : portfolio;
+
+    const reportProjects = filteredPortfolio.map((p) => {
+      const pReport: any = { project_id: p.id };
+
+      if (filterSections.includes("scores")) {
+        pReport.scores = {
+          credit_quality: p.scores.credit_quality,
+          green_impact: p.scores.green_impact,
+        };
       }
-      if (!sections || sections.includes("performance")) {
-        out.actual_vs_expected_ratio = Math.round(p.actual_vs_expected_ratio * 100) / 100;
+
+      if (filterSections.includes("performance")) {
+        let status: "Optimal" | "Underperforming" | "Critical" = "Optimal";
+        if (p.actual_vs_expected_ratio < 0.8) {
+          status = "Critical";
+        } else if (p.actual_vs_expected_ratio < 0.95) {
+          status = "Underperforming";
+        }
+
+        pReport.performance = {
+          efficiency_pct: p.solar.efficiency_pct,
+          power_output_kw: p.solar.power_output_kw,
+          actual_vs_expected_ratio: Math.round(p.actual_vs_expected_ratio * 100) / 100,
+          performance_status: status,
+        };
       }
-      if (!sections || sections.includes("compliance")) {
-        out.green_impact = p.scores.green_impact;
+
+      if (filterSections.includes("financials")) {
+        const input = createDefaultFinancialInput(p.solar.max_power_kw, p.solar.efficiency_pct);
+        const npvResult = calculateNPV(input);
+        const paybackResult = calculatePaybackPeriod(input);
+
+        pReport.financials = {
+          installation_cost: Math.round(input.installation_cost * 100) / 100,
+          npv: Math.round(npvResult.npv * 100) / 100,
+          payback_period_years: paybackResult.reaches_payback
+            ? Math.round(paybackResult.payback_years * 10) / 10
+            : null,
+        };
       }
-      if (!sections || sections.includes("scores")) {
-        out.scores = p.scores;
+
+      if (filterSections.includes("compliance")) {
+        const score = (p.scores.credit_quality + p.scores.green_impact) / 2;
+        let status: "Compliant" | "Warning" | "Non-Compliant" = "Compliant";
+        if (score < 50) {
+          status = "Non-Compliant";
+        } else if (score < 70) {
+          status = "Warning";
+        }
+
+        pReport.compliance = {
+          green_impact: p.scores.green_impact,
+          compliance_status: status,
+          carbon_credits_issued: Math.round(p.solar.power_output_kw * p.scores.green_impact * 0.5),
+        };
       }
-      return out;
+
+      return pReport;
     });
 
-    res.json({ generated_at: Date.now(), projects: result });
+    res.json({
+      generated_at: Date.now(),
+      project_count: reportProjects.length,
+      projects: reportProjects,
+    });
   } catch (error) {
     next(error);
   }
