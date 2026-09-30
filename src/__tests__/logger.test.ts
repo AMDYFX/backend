@@ -62,4 +62,53 @@ describe("logger configuration", () => {
       });
     });
   });
+
+  describe("formatError", () => {
+    it("formats standard errors with error_name and error_message", () => {
+      const err = new Error("something went wrong");
+      const formatted = logger.formatError(err);
+      expect(formatted).toMatchObject({
+        error_name: "Error",
+        error_message: "something went wrong",
+      });
+      expect(formatted.contract_error_name).toBeUndefined();
+    });
+
+    it("formats non-error values into error string", () => {
+      expect(logger.formatError("simple error string")).toEqual({
+        error: "simple error string",
+      });
+    });
+
+    it("decodes contract errors into contract_error_name, contract_error_code, contract_error_source", () => {
+      const err = new Error("simulation failed: HostError: Error(Contract, #7)");
+      const formatted = logger.formatError(err);
+      expect(formatted).toMatchObject({
+        error_name: "Error",
+        error_message: "simulation failed: HostError: Error(Contract, #7)",
+        contract_error_name: "ProjectNotFound",
+        contract_error_code: 7,
+        contract_error_source: "registry",
+      });
+    });
+
+    it("decodes contract errors from plain string errors", () => {
+      const formatted = logger.formatError("HostError: Error(Contract, #2)");
+      expect(formatted).toMatchObject({
+        error: "HostError: Error(Contract, #2)",
+        contract_error_name: "UpdateTooFrequent",
+        contract_error_code: 2,
+        contract_error_source: "registry",
+      });
+    });
+
+    it("decodes unknown contract errors with Unknown name while preserving code", () => {
+      const formatted = logger.formatError(new Error("HostError: Error(Contract, #999)"));
+      expect(formatted).toMatchObject({
+        contract_error_name: "Unknown",
+        contract_error_code: 999,
+        contract_error_source: "registry",
+      });
+    });
+  });
 });

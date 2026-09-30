@@ -12,6 +12,7 @@ import { logger } from "../lib/logger";
 import { config } from "../config";
 import { requireApiKeyRole, extractApiKeyRole } from "../middleware/requireApiKeyRole";
 import { timingSafeCompare } from "../lib/timing-safe";
+import { parseContractError } from "../lib/contractErrors";
 
 const router = Router();
 
@@ -162,7 +163,13 @@ function parseProjectIds(body: unknown): number[] | null {
 function auditUpdateScores(
   req: Request,
   projectIds: number[],
-  outcome: { success: boolean; results?: unknown; error?: string },
+  outcome: {
+    success: boolean;
+    results?: unknown;
+    error?: string;
+    contract_error_name?: string;
+    contract_error_code?: number;
+  },
 ): void {
   writeAuditLog({
     action: "admin.update-scores",
@@ -192,7 +199,15 @@ router.post(
       auditedIds = projectIds;
 
       const results: ScoreUpdateResult[] = [];
-      const errors: Array<{ project_id: number; error: { code: string; message: string } }> = [];
+      const errors: Array<{
+        project_id: number;
+        error: {
+          code: string;
+          message: string;
+          contract_error_name?: string;
+          contract_error_code?: number;
+        };
+      }> = [];
       const skipped: Array<{ project_id: number; reason: string }> = [];
 
       for (const projectId of projectIds) {
@@ -273,11 +288,15 @@ router.post(
           }
         } catch (err) {
           logger.error(`[oracle] project ${projectId} failed`, logger.formatError(err));
+          const decoded = parseContractError(err);
           errors.push({
             project_id: projectId,
             error: {
               code: "update_failed",
               message: err instanceof Error ? err.message : String(err),
+              ...(decoded
+                ? { contract_error_name: decoded.name, contract_error_code: decoded.code }
+                : {}),
             },
           });
         }
@@ -293,9 +312,13 @@ router.post(
       });
       res.json({ updated: results.length, results, errors, skipped });
     } catch (error) {
+      const decoded = parseContractError(error);
       auditUpdateScores(req, auditedIds, {
         success: false,
         error: error instanceof Error ? error.message : String(error),
+        ...(decoded
+          ? { contract_error_name: decoded.name, contract_error_code: decoded.code }
+          : {}),
       });
       next(error);
     }

@@ -7,6 +7,7 @@
  */
 
 import { logger } from "./logger";
+import { parseContractError } from "./contractErrors";
 
 export interface RetryConfig {
   /** Maximum number of attempts (including the first). Default: 4 */
@@ -48,19 +49,26 @@ interface StatusCarryingError {
   response?: { status?: number };
 }
 
-/** Pulls an HTTP-style status code off an error, from either a property or the message text. */
-function extractHttpStatus(err: unknown): number | undefined {
+/** Pulls an HTTP-style status code off an error, strictly from structured fields or numeric values. */
+export function extractHttpStatus(err: unknown): number | undefined {
+  if (typeof err === "number") {
+    return err;
+  }
   if (err && typeof err === "object") {
     const { status, statusCode, response } = err as StatusCarryingError;
     const direct = status ?? statusCode ?? response?.status;
     if (typeof direct === "number") return direct;
   }
-  const msg = err instanceof Error ? err.message : String(err);
-  const match = msg.match(/\b([45]\d{2})\b/);
-  return match ? Number(match[1]) : undefined;
+  return undefined;
 }
 
 export function isTransientError(err: unknown): boolean {
+  // Contract panics: NOT retried unless their code is explicitly marked retryable.
+  const contractErr = parseContractError(err);
+  if (contractErr !== null) {
+    return contractErr.retryable;
+  }
+
   const msg = err instanceof Error ? err.message : String(err);
   if (PERMANENT_ERROR_PATTERNS.some((p) => msg.includes(p))) return false;
 

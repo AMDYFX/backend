@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { parseContractError } from "./contractErrors";
 
 /**
  * Structured audit logger (#542). Deliberately separate from the application
@@ -20,6 +21,8 @@ export interface AuditLogEntry {
   success: boolean;
   results?: unknown;
   error?: string;
+  contract_error_name?: string;
+  contract_error_code?: number;
 }
 
 export type AuditSink = (line: string) => void;
@@ -27,7 +30,8 @@ export type AuditSink = (line: string) => void;
 let sinkOverride: AuditSink | null | undefined;
 
 const defaultSink = (): AuditSink | null => {
-  const target = process.env.AUDIT_LOG_FILE ?? (process.env.NODE_ENV === "test" ? "" : "logs/audit.log");
+  const target =
+    process.env.AUDIT_LOG_FILE ?? (process.env.NODE_ENV === "test" ? "" : "logs/audit.log");
   if (!target) return null;
   if (target === "stdout") return (line) => void process.stdout.write(line + "\n");
   let ready = false;
@@ -57,7 +61,22 @@ export function setAuditSink(sink: AuditSink | null | undefined): void {
 export function writeAuditLog(
   entry: Omit<AuditLogEntry, "timestamp"> & { timestamp?: string },
 ): AuditLogEntry {
-  const full: AuditLogEntry = { timestamp: new Date().toISOString(), ...entry };
+  let contract_error_name = entry.contract_error_name;
+  let contract_error_code = entry.contract_error_code;
+  if (!contract_error_name && entry.error) {
+    const decoded = parseContractError(entry.error);
+    if (decoded) {
+      contract_error_name = decoded.name;
+      contract_error_code = decoded.code;
+    }
+  }
+
+  const full: AuditLogEntry = {
+    timestamp: new Date().toISOString(),
+    ...entry,
+    ...(contract_error_name !== undefined ? { contract_error_name } : {}),
+    ...(contract_error_code !== undefined ? { contract_error_code } : {}),
+  };
   try {
     resolveSink()?.(JSON.stringify(full));
   } catch {
