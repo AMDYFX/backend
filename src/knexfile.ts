@@ -1,23 +1,6 @@
 import type { Knex } from "knex";
 import fs from "fs";
 
-
-const sslConfig = process.env.DB_SSL_CA_PATH
-  ? {
-      rejectUnauthorized: true,
-      ca: fs.readFileSync(path.resolve(process.env.DB_SSL_CA_PATH)).toString(),
-    }
-  : process.env.NODE_ENV === 'production'
-  ? { rejectUnauthorized: true }
-  : false;
-
-export default {
-  // ...
-  connection: {
-    // ...
-    ssl: sslConfig,
-  },
-};
 const baseConfig: Knex.Config = {
   client: "pg",
   migrations: {
@@ -111,4 +94,3 @@ const config: Record<string, Knex.Config> = {
 };
 
 export default config;
-

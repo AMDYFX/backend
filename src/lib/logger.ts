@@ -15,11 +15,9 @@ const ENV_LEVEL_MAP: Record<string, LogLevel> = {
 };
 
 let currentLevel: LogLevel | null = null;
+let envLevel: LogLevel | null = null;
 
-function getConfiguredLevel(): LogLevel {
-  if (currentLevel !== null) {
-    return currentLevel;
-  }
+function resolveEnvLevel(): LogLevel {
   if (process.env.LOG_LEVEL) {
     const raw = process.env.LOG_LEVEL.toLowerCase() as LogLevel;
     if (raw in LEVEL_RANK) {
@@ -28,6 +26,16 @@ function getConfiguredLevel(): LogLevel {
   }
   const env = (process.env.NODE_ENV || "development").toLowerCase();
   return ENV_LEVEL_MAP[env] || "info";
+}
+
+function getConfiguredLevel(): LogLevel {
+  if (currentLevel !== null) {
+    return currentLevel;
+  }
+  if (envLevel === null) {
+    envLevel = resolveEnvLevel();
+  }
+  return envLevel;
 }
 
 function shouldEmit(level: LogLevel): boolean {
@@ -90,45 +98,15 @@ export function setLogLevel(level: LogLevel): void {
   currentLevel = level;
 }
 
+export function clearLogLevelCache(): void {
+  currentLevel = null;
+  envLevel = null;
+}
+
 export function getLogLevel(): LogLevel {
   return getConfiguredLevel();
 }
 
 export function getLogLevels(): Record<LogLevel, number> {
   return { ...LEVEL_RANK };
-}
-
-
-let currentLevel: string | null = null;
-
-function getConfiguredLevel(): string {
-  if (currentLevel !== null) return currentLevel; // Cache hit
-
-  const raw = process.env.LOG_LEVEL;
-  let level: string;
-
-  if (raw && isValidLogLevel(raw)) {
-    level = raw.toLowerCase();
-  } else if (process.env.NODE_ENV === 'test') {
-    level = 'silent';
-  } else if (process.env.NODE_ENV === 'production') {
-    level = 'info';
-  } else {
-    level = 'debug';
-  }
-
-  currentLevel = level; // Populate cache
-  return currentLevel;
-}
-
-export function setLogLevel(newLevel: string): void {
-  if (!isValidLogLevel(newLevel)) {
-    throw new Error(`Invalid log level: ${newLevel}`);
-  }
-  currentLevel = newLevel.toLowerCase(); // Updates/invalidates existing cache
-}
-
-// Optional helper for test cleanup/resets
-export function clearLogLevelCache(): void {
-  currentLevel = null;
 }
