@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { indexer } from "../lib/indexer";
+import { indexer, VaultEvent } from "../lib/indexer";
 import { logger } from "../lib/logger";
 import { badRequest } from "../middleware/errors";
 import { getPortfolio, validateStellarAddress, i128ToDecimal } from "../lib/vault";
@@ -8,7 +8,7 @@ const router = Router();
 
 interface PortfolioEvent {
   id: string;
-  type: "deposit" | "withdraw";
+  type: VaultEvent["type"];
   amount: number;
   shares: number;
   timestamp: number;

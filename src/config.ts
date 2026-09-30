@@ -168,6 +168,10 @@ function buildConfig() {
 
     /** Secrets Management */
     SECRETS_PROVIDER: optionalEnv("SECRETS_PROVIDER", "env"),
+
+    /** Vault event indexer */
+    VAULT_EVENT_INDEXER_START_LEDGER: numEnv("VAULT_EVENT_INDEXER_START_LEDGER", 0),
+    VAULT_EVENT_INDEXER_ENABLED: optionalEnv("VAULT_EVENT_INDEXER_ENABLED", "false"),
   } as const;
 }
 

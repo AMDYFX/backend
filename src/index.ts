@@ -27,6 +27,7 @@ import financialRouter from "./routes/financial";
 import forecastRouter from "./routes/forecast";
 import maintenanceRouter from "./routes/maintenance";
 import investorRouter from "./routes/investor";
+import investorActivityRouter from "./routes/investorActivity";
 import apiKeysRouter from "./routes/apiKeys";
 import notificationsRouter, { publicNotificationsRouter } from "./routes/notifications";
 import oracleStatusRouter from "./routes/oracle-status";
@@ -342,6 +343,7 @@ v1.use("/financial", publicLimiter, apiKeyAuth, financialRouter);
 v1.use("/forecast", publicLimiter, forecastRouter);
 v1.use("/maintenance", publicLimiter, apiKeyAuth, maintenanceRouter);
 v1.use("/investor", publicLimiter, investorRouter);
+v1.use("/investors", publicLimiter, investorActivityRouter);
 v1.use("/status/oracle", publicLimiter, oracleStatusRouter);
 v1.use("/admin/api-keys", ipWhitelist, adminLimiter, requestSigning, apiKeysRouter);
 v1.use("/notifications", publicLimiter, publicNotificationsRouter); // email-link targets (confirm/unsubscribe)
@@ -369,6 +371,7 @@ app.use("/api/financial", publicLimiter, apiKeyAuth, financialRouter);
 app.use("/api/forecast", publicLimiter, apiKeyAuth, forecastRouter);
 app.use("/api/maintenance", publicLimiter, apiKeyAuth, maintenanceRouter);
 app.use("/api/investor", publicLimiter, apiKeyAuth, investorRouter);
+app.use("/api/investors", publicLimiter, apiKeyAuth, investorActivityRouter);
 app.use("/api/admin/api-keys", ipWhitelist, adminLimiter, apiKeysRouter);
 
 // JSON 404 for anything unmatched, then the structured error handler.
