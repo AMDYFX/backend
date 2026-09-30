@@ -150,7 +150,13 @@ export function broadcastScoreUpdate(update: ScoreUpdate): void {
   for (const [ws, state] of clients) {
     if (ws.readyState !== WebSocket.OPEN) continue;
     if (state.all || state.subscriptions.has(update.project_id)) {
-      ws.send(frame);
+      try {
+        ws.send(frame);
+      } catch (error) {
+        // Socket was closed between readyState check and send — clean up
+        ws.close();
+        clients.delete(ws);
+      }
     }
   }
 }
