@@ -2,10 +2,10 @@
 /**
  * Generate the API client package from the OpenAPI spec.
  * This creates TypeScript types and a fetch client using openapi-typescript and openapi-fetch.
- * Usage: npm run api-client:generate
+ * Usage: bun run api-client:generate
  */
 
-import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
@@ -49,16 +49,16 @@ function main(): void {
 
     // Generate TypeScript types using openapi-typescript
     console.log("🔄 Generating TypeScript types...");
-    runCommand(`npx openapi-typescript ${specPath} -o ${clientTypesPath}`, projectRoot);
+    runCommand(`bunx openapi-typescript ${specPath} -o ${clientTypesPath}`, projectRoot);
 
     // Create the main index.ts that exports the client
     const indexContent = `/**
  * Heliobond API Client
  * Auto-generated from OpenAPI spec. Do not edit manually.
- * Run 'npm run api-client:generate' in the backend to regenerate.
+ * Run 'bun run api-client:generate' in the backend to regenerate.
  */
 
-import type { paths } from "./types";
+import type { paths } from "./types.js";
 import createClient, { type Middleware, type Client } from "openapi-fetch";
 
 /**
@@ -99,31 +99,30 @@ export default createApiClient;
 /**
  * Re-export types for consumers
  */
-export type { paths } from "./types";
+export type { paths } from "./types.js";
 `;
 
     writeFileSync(clientIndexPath, indexContent, "utf-8");
 
-    // Create package.json for the client package
+    // Create package.json for the client package. The version follows the spec.
+    const specVersion = JSON.parse(readFileSync(specPath, "utf-8")).info.version as string;
     const packageJson = {
       name: "@heliobond/api-client",
-      version: "1.0.0",
+      version: specVersion,
       description: "Type-safe API client for Heliobond backend",
       license: "Apache-2.0",
+      type: "module",
       main: "dist/index.js",
-      module: "dist/index.mjs",
       types: "dist/index.d.ts",
       exports: {
         ".": {
-          import: "./dist/index.mjs",
-          require: "./dist/index.js",
           types: "./dist/index.d.ts",
+          default: "./dist/index.js",
         },
       },
       files: ["dist"],
       scripts: {
-        build: "tsc && tsc -p tsconfig.esm.json",
-        "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap --outDir dist",
+        build: "tsc",
         prepublishOnly: "npm run build",
       },
       peerDependencies: {
@@ -171,22 +170,6 @@ export type { paths } from "./types";
 
     writeFileSync(clientTsconfigPath, JSON.stringify(tsconfig, null, 2), "utf-8");
 
-    // Create tsconfig.esm.json for ESM output
-    const tsconfigEsm = {
-      extends: "./tsconfig.json",
-      compilerOptions: {
-        module: "ESNext",
-        outDir: "./dist",
-        moduleResolution: "Bundler",
-      },
-    };
-
-    writeFileSync(
-      resolve(clientPackageRoot, "tsconfig.esm.json"),
-      JSON.stringify(tsconfigEsm, null, 2),
-      "utf-8",
-    );
-
     // Create README for the client package
     const readme = `# @heliobond/api-client
 
@@ -220,10 +203,10 @@ const portfolio = await api.GET("/portfolio");
 
 This package is auto-generated from the backend's OpenAPI spec. To regenerate:
 
-1. In the backend repo: \`npm run openapi:export\`
-2. Then: \`npm run api-client:generate\`
-3. Then: \`npm run api-client:build\`
-4. Then: \`npm run api-client:publish\` (requires npm auth)
+1. In the backend repo: \`bun run openapi:export\`
+2. Then: \`bun run api-client:generate\`
+3. Then: \`bun run api-client:build\`
+4. Then: \`bun run api-client:publish\` (requires npm auth)
 
 ## Versioning
 
@@ -233,10 +216,7 @@ The client version follows the backend's OpenAPI spec version (info.version).
     writeFileSync(resolve(clientPackageRoot, "README.md"), readme, "utf-8");
 
     console.log("✅ API client package generated at packages/api-client");
-    console.log("📝 Next steps:");
-    console.log("   1. cd packages/api-client && npm install");
-    console.log("   2. npm run build");
-    console.log("   3. npm run publish (when ready)");
+    console.log("📝 Next: bun run api-client:build");
   } catch (error) {
     console.error("❌ Failed to generate API client:", error);
     process.exit(1);

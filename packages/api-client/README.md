@@ -30,10 +30,10 @@ const portfolio = await api.GET("/portfolio");
 
 This package is auto-generated from the backend's OpenAPI spec. To regenerate:
 
-1. In the backend repo: `npm run openapi:export`
-2. Then: `npm run api-client:generate`
-3. Then: `npm run api-client:build`
-4. Then: `npm run api-client:publish` (requires npm auth)
+1. In the backend repo: `bun run openapi:export`
+2. Then: `bun run api-client:generate`
+3. Then: `bun run api-client:build`
+4. Then: `bun run api-client:publish` (requires npm auth)
 
 ## Versioning
 

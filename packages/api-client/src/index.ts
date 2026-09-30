@@ -1,10 +1,10 @@
 /**
  * Heliobond API Client
  * Auto-generated from OpenAPI spec. Do not edit manually.
- * Run 'npm run api-client:generate' in the backend to regenerate.
+ * Run 'bun run api-client:generate' in the backend to regenerate.
  */
 
-import type { paths } from "./types";
+import type { paths } from "./types.js";
 import createClient, { type Middleware, type Client } from "openapi-fetch";
 
 /**
@@ -45,4 +45,4 @@ export default createApiClient;
 /**
  * Re-export types for consumers
  */
-export type { paths } from "./types";
+export type { paths } from "./types.js";

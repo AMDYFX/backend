@@ -2,7 +2,7 @@
 /**
  * Export OpenAPI specification to a JSON file.
  * This script is run at build time to ensure the spec file is always up to date.
- * Usage: npm run openapi:export
+ * Usage: bun run openapi:export
  */
 
 import { writeFileSync, mkdirSync } from "node:fs";

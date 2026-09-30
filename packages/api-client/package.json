@@ -3,22 +3,20 @@
   "version": "1.0.0",
   "description": "Type-safe API client for Heliobond backend",
   "license": "Apache-2.0",
+  "type": "module",
   "main": "dist/index.js",
-  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
-    "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap --outDir dist",
+    "build": "tsc",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {

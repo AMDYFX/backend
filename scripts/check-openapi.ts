@@ -2,7 +2,7 @@
 /**
  * Check if the exported OpenAPI spec (openapi.json) is up to date with the source.
  * This script is used in CI to fail if the spec is stale.
- * Usage: npm run openapi:check
+ * Usage: bun run openapi:check
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -17,7 +17,7 @@ const specPath = resolve(projectRoot, "openapi.json");
 
 function main(): void {
   if (!existsSync(specPath)) {
-    console.error("❌ openapi.json not found. Run 'npm run openapi:export' first.");
+    console.error("❌ openapi.json not found. Run 'bun run openapi:export' first.");
     process.exit(1);
   }
 
@@ -38,7 +38,7 @@ function main(): void {
       console.error(
         "   The exported openapi.json does not match the current spec in src/lib/swagger.ts",
       );
-      console.error("   Run 'npm run openapi:export' to update it.");
+      console.error("   Run 'bun run openapi:export' to update it.");
       process.exit(1);
     }
   } catch (error) {

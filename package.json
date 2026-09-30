@@ -23,7 +23,7 @@
     "openapi:export": "tsx scripts/export-openapi.ts",
     "openapi:check": "tsx scripts/check-openapi.ts",
     "api-client:generate": "tsx scripts/generate-api-client.ts",
-    "api-client:build": "cd packages/api-client && npm install && npm run build",
+    "api-client:build": "cd packages/api-client && bun run build",
     "api-client:publish": "cd packages/api-client && npm publish"
   },
   "lint-staged": {
