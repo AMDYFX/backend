@@ -1273,9 +1273,58 @@ Feature flag management and evaluation context analytics.
 
 ## 20. WebSocket Real-Time Updates
 
-The WebSocket endpoint provides real-time binary score updates with low latency and minimal bandwidth usage.
+Two WebSocket feeds are exposed, targeting different consumers:
 
-### Connection
+| Path         | Auth   | Frames         | Intended consumer                                   |
+| ------------ | ------ | -------------- | --------------------------------------------------- |
+| `/ws`        | Bearer | Binary (score) | Internal / server-to-server admin subscribers.       |
+| `/ws/events` | None   | JSON (vault)   | Browser tabs (the `VaultEventStream` in the app UI). |
+
+Both share the same HTTP server; the upgrade handler routes by URL pathname.
+
+### `/ws/events`: browser vault event stream (#767)
+
+Browsers cannot set headers on a `WebSocket`, so this feed accepts a bare
+`new WebSocket(url)` with **no** headers and **no** subscribe frame. The
+frontend's `VaultEventStream` is the canonical consumer.
+
+- **Endpoint**: `ws://localhost:3001/ws/events` (dev) or
+  `wss://your-domain.com/ws/events` (production).
+- **Auth**: none, this endpoint serves public chain data. Follow-up
+  work (#655) may layer an optional `Sec-WebSocket-Protocol` token.
+- **Optional filter**: `?contract=<contractId>`, only events whose
+  `contractId` field matches are delivered to that client. Omit to
+  receive every broadcast.
+- **Frame shape**: the fixture at
+  `src/__tests__/fixtures/vault-event.json` is the shared contract with
+  the frontend:
+
+  ```json
+  {
+    "type": "ScoreChanged",
+    "contractId": "CDLZ...CYSC",
+    "ledger": 1234567,
+    "topic": ["AAAA...", "AAAA..."],
+    "value": { "project_id": 27, "credit_quality": 82, "green_impact": 74 },
+    "id": "1234567-0"
+  }
+  ```
+
+- **Connection limits**: `WS_EVENTS_MAX_PER_IP` (default 8) concurrent
+  sockets per source IP. The 9th connection is closed with code
+  `1013 too many connections from this IP`.
+- **Heartbeat**: the server sends a WebSocket `ping` every 30s; sockets
+  that fail to `pong` within 60s are terminated. Browser `WebSocket`
+  answers pings automatically.
+- **Producers**: any backend module can push an event via
+  `broadcastVaultEvent(evt)` from `src/lib/vaultEvents.ts`. The full
+  end-to-end wiring from a Soroban indexer is tracked in the paired
+  issue referenced from #767.
+
+### `/ws`: authenticated binary score-update feed
+
+Unchanged from before #767. Provides real-time binary score updates with
+low latency and minimal bandwidth usage.
 
 - **Endpoint**: `ws://localhost:3001/ws` (dev) or `wss://your-domain.com/ws` (production)
 - **Protocol**: Binary frames for score updates, JSON for control messages
