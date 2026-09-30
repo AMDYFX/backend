@@ -1,6 +1,14 @@
 import request from "supertest";
 import express, { Request, Response } from "express";
-import { versionHeaders, acceptVersion, deprecationHeaders } from "../middleware/versioning";
+import {
+  versionHeaders,
+  acceptVersion,
+  deprecationHeaders,
+  legacyApiUsage,
+  legacyPathLabel,
+  LEGACY_SUNSET_DATE,
+} from "../middleware/versioning";
+import { register } from "../lib/prometheus";
 
 function buildApp() {
   const app = express();
@@ -77,25 +85,21 @@ describe("requestLogger correlation ID", () => {
 
     const res = await request(app).get("/test");
     expect(res.headers["x-correlation-id"]).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
   });
 });
 
 describe("legacy /api usage (#660)", () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { legacyApiUsage, legacyPathLabel, LEGACY_SUNSET_DATE } = require("../middleware/versioning");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { register } = require("../lib/prometheus");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const supertest = require("supertest");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const express = require("express");
-
   function appAt(now: number) {
     const app = express();
-    app.use("/api", legacyApiUsage(() => now));
-    app.get("/api/projects/:id", (_req: unknown, res: { json: (b: unknown) => void }) => res.json({ ok: true }));
+    app.use(
+      "/api",
+      legacyApiUsage(() => now),
+    );
+    app.get("/api/projects/:id", (_req: unknown, res: { json: (b: unknown) => void }) =>
+      res.json({ ok: true }),
+    );
     return app;
   }
 
@@ -105,14 +109,14 @@ describe("legacy /api usage (#660)", () => {
   });
 
   it("counts legacy requests and passes through before the sunset", async () => {
-    const res = await supertest(appAt(LEGACY_SUNSET_DATE.getTime() - 1)).get("/api/projects/1");
+    const res = await request(appAt(LEGACY_SUNSET_DATE.getTime() - 1)).get("/api/projects/1");
     expect(res.status).toBe(200);
     const metrics = await register.getSingleMetricAsString("legacy_api_requests_total");
     expect(metrics).toContain('path="/api/projects"');
   });
 
   it("returns 410 Gone pointing at /v1 after the sunset", async () => {
-    const res = await supertest(appAt(LEGACY_SUNSET_DATE.getTime())).get("/api/projects/1?a=b");
+    const res = await request(appAt(LEGACY_SUNSET_DATE.getTime())).get("/api/projects/1?a=b");
     expect(res.status).toBe(410);
     expect(res.body.error.successor).toBe("/v1/projects/1?a=b");
     expect(res.headers.link).toContain("/v1/projects/1");

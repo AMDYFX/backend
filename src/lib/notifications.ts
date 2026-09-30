@@ -16,10 +16,7 @@ import { withRetry } from "./retry";
 import { logger } from "./logger";
 
 export type NotificationEventType =
-  | "yield_distributed"
-  | "withdrawal_queued"
-  | "withdrawal_claimable"
-  | "score_changed";
+  "yield_distributed" | "withdrawal_queued" | "withdrawal_claimable" | "score_changed";
 
 export const EVENT_TYPES: readonly NotificationEventType[] = [
   "yield_distributed",
@@ -62,7 +59,9 @@ const byUnsubscribeToken = new Map<string, string>();
 const byConfirmToken = new Map<string, string>();
 const delivered = new Set<string>();
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Domain labels exclude "." so the pattern is unambiguous (no polynomial backtracking).
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+const EMAIL_MAX_LENGTH = 254;
 const DEFAULT_THRESHOLD = 5;
 
 function token(): string {
@@ -102,7 +101,10 @@ export async function updatePreferences(
   address: string,
   input: PreferenceInput,
 ): Promise<UpdateResult> {
-  if (input.email != null && !EMAIL_RE.test(input.email)) {
+  if (
+    input.email != null &&
+    (input.email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(input.email))
+  ) {
     throw new Error("email must be a valid email address");
   }
   if (input.events && !input.events.every((e) => EVENT_TYPES.includes(e))) {
@@ -174,7 +176,11 @@ export async function updatePreferences(
   if (input.project_ids) r.project_ids = [...new Set(input.project_ids)];
   r.updated_at = new Date().toISOString();
 
-  return { preferences: publicView(r), webhook_secret: webhookSecret, confirmation_sent: confirmationSent };
+  return {
+    preferences: publicView(r),
+    webhook_secret: webhookSecret,
+    confirmation_sent: confirmationSent,
+  };
 }
 
 /** Complete double opt-in. Returns false for an unknown/used token. */
@@ -233,7 +239,10 @@ function describe(e: NotificationEvent): { subject: string; text: string } {
 function wants(r: Record_, e: NotificationEvent): boolean {
   if (!r.events.includes(e.type)) return false;
   if (e.type !== "score_changed") return true;
-  if (r.project_ids.length > 0 && !(e.project_id !== undefined && r.project_ids.includes(e.project_id))) {
+  if (
+    r.project_ids.length > 0 &&
+    !(e.project_id !== undefined && r.project_ids.includes(e.project_id))
+  ) {
     return false;
   }
   const cq = Math.abs(Number(e.data.credit_quality_delta ?? 0));
@@ -291,18 +300,21 @@ export async function notify(e: NotificationEvent): Promise<DispatchSummary> {
         timestamp: Date.now(),
       });
       try {
-        await withRetry(async () => {
-          await validatePublicUrl(url); // re-check at send time (DNS rebinding)
-          const res = await fetch(url, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Heliobond-Signature": signPayload(body, r.webhook_secret),
-            },
-            body,
-          });
-          if (!res.ok) throw new Error(`webhook responded HTTP ${res.status}`);
-        }, { maxAttempts: 3, baseDelayMs: 500, label: "notification-webhook" });
+        await withRetry(
+          async () => {
+            await validatePublicUrl(url); // re-check at send time (DNS rebinding)
+            const res = await fetch(url, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Heliobond-Signature": signPayload(body, r.webhook_secret),
+              },
+              body,
+            });
+            if (!res.ok) throw new Error(`webhook responded HTTP ${res.status}`);
+          },
+          { maxAttempts: 3, baseDelayMs: 500, label: "notification-webhook" },
+        );
         summary.webhook++;
       } catch (err) {
         delivered.delete(`${e.type}:${e.id}:webhook:${r.address}`);
