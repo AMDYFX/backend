@@ -340,9 +340,9 @@ v1.use("/satellite-sources", ipWhitelist, adminLimiter, requestSigning, satellit
 v1.use("/comparison", publicLimiter, apiKeyAuth, comparisonRouter);
 v1.use("/benchmarking", publicLimiter, apiKeyAuth, benchmarkingRouter);
 v1.use("/financial", publicLimiter, apiKeyAuth, financialRouter);
-v1.use("/forecast", publicLimiter, forecastRouter);
+v1.use("/forecast", publicLimiter, apiKeyAuth, forecastRouter);
 v1.use("/maintenance", publicLimiter, apiKeyAuth, maintenanceRouter);
-v1.use("/investor", publicLimiter, investorRouter);
+v1.use("/investor", publicLimiter, apiKeyAuth, investorRouter);
 v1.use("/investors", publicLimiter, investorActivityRouter);
 v1.use("/status/oracle", publicLimiter, oracleStatusRouter);
 v1.use("/admin/api-keys", ipWhitelist, adminLimiter, requestSigning, apiKeysRouter);
