@@ -90,7 +90,7 @@ function buildConfig() {
     /** Database connection */
     DB_HOST: optionalEnv("DB_HOST", "localhost"),
     DB_PORT: numEnv("DB_PORT", 5432),
-    DB_NAME: optionalEnv("DB_NAME", ""),
+    DB_NAME: optionalEnv("DB_NAME", "heliobond_dev"),
     DB_USER: optionalEnv("DB_USER", "postgres"),
     DB_PASSWORD: optionalEnv("DB_PASSWORD", ""),
 
