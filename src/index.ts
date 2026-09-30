@@ -32,20 +32,10 @@ import { graphqlSchema, graphqlRoot, createGraphQLContext } from "./graphql/sche
 import { startGrpcServer } from "./grpc/server";
 import { getSolarData } from "./lib/iot";
 import { assignRole } from "./lib/roles";
-import { fetchSatelliteWithFallback } from "./lib/satellite-sources";
-import { computeScores } from "./lib/scoring";
-import { getTotalProjects, updateImpactScore, DuplicateSubmissionError } from "./lib/registry";
-import { generateIdempotencyKey, checkIdempotency } from "./lib/idempotency";
 import { runHourlyScoreUpdate } from "./lib/scoreUpdateCron";
+import { runTxQueueRetry } from "./lib/txQueueRetryCron";
 import { isErrorRateLimited } from "./lib/error-limiter";
 import { isRpcOutageExtended, isRpcAvailable, getRpcStatus } from "./lib/stellar";
-import {
-  getQueueSize,
-  getQueueSnapshot,
-  remove,
-  incrementRetry,
-  hasExceededMaxRetries,
-} from "./lib/tx-queue";
 import { indexer } from "./lib/indexer";
 import { getHealth, getReadiness, recordCronRun } from "./lib/health";
 import { getMetrics } from "./lib/metrics";
@@ -432,84 +422,7 @@ scheduleCron(
   "*/5 * * * *",
   async () => {
     if (isShuttingDown) return;
-    if (getQueueSize() === 0) return;
-
-    if (!isRpcAvailable()) {
-      logger.info(`[cron] tx-queue: RPC unavailable, ${getQueueSize()} transactions pending`);
-      return;
-    }
-
-    logger.info(`[cron] tx-queue: processing ${getQueueSize()} queued transactions`);
-    const maxRetries = 10;
-    const processed: number[] = [];
-
-    // Snapshot the queue once and make a single pass over it. Each item gets
-    // at most one attempt per cron tick: on success (or a detected duplicate)
-    // it is removed; on failure it is left in the queue (with its retry
-    // count bumped in place) so the *next* 5-minute tick retries it, instead
-    // of hot-looping the same failing item synchronously in this run.
-    //
-    // Items are only ever removed from the queue on success, on a detected
-    // duplicate, or once they've exceeded MAX_RETRIES — never merely because
-    // an attempt was made (see #532).
-    for (const item of getQueueSnapshot()) {
-      try {
-        const solar = getSolarData(item.projectId);
-        const satellite = await fetchSatelliteWithFallback(item.projectId);
-        const fresh = computeScores({ solar, satellite });
-
-        // Generate an idempotency key for this retry so a queued transaction
-        // that was already submitted on-chain is not double-submitted.
-        const idempotencyKey = generateIdempotencyKey(item.projectId);
-        const { isDuplicate } = checkIdempotency(idempotencyKey);
-        if (isDuplicate) {
-          logger.info(
-            `[cron] tx-queue: project ${item.projectId} skipped — already submitted this hour (key=${idempotencyKey})`,
-          );
-          remove(item.projectId);
-          processed.push(item.projectId);
-        } else {
-          const tx_hash = await updateImpactScore(
-            item.projectId,
-            fresh.credit_quality,
-            fresh.green_impact,
-            idempotencyKey,
-          );
-          remove(item.projectId);
-          processed.push(item.projectId);
-          logger.info(
-            `[cron] tx-queue: project ${item.projectId} retried successfully tx=${tx_hash}`,
-          );
-        }
-      } catch (err) {
-        if (err instanceof DuplicateSubmissionError) {
-          // Belt-and-suspenders: also catch if DuplicateSubmissionError bubbles up.
-          logger.info(
-            `[cron] tx-queue: project ${item.projectId} skipped (duplicate): ${err.message}`,
-          );
-          remove(item.projectId);
-          processed.push(item.projectId);
-        } else {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          incrementRetry(item.projectId, errMsg);
-
-          if (hasExceededMaxRetries(item.projectId)) {
-            logger.error(
-              `[cron] tx-queue: project ${item.projectId} exceeded max retries (${maxRetries}), dropping`,
-            );
-            remove(item.projectId);
-          } else {
-            logger.warn(
-              `[cron] tx-queue: project ${item.projectId} retry failed (attempt ${item.retryCount}), will retry`,
-            );
-          }
-        }
-      }
-    }
-
-    if (processed.length > 0) {
-      logger.info(`[cron] tx-queue: successfully retried ${processed.length} transactions`);
-    }
+    await runTxQueueRetry();
   },
   { timezone: CRON_TIMEZONE },
 );
