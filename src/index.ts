@@ -356,7 +356,14 @@ v1.use("/metadata", ipWhitelist, adminLimiter, metadataRouter);
 v1.use("/dashboards", publicLimiter, apiKeyAuth, dashboardRouter);
 v1.use("/email", ipWhitelist, adminLimiter, requestSigning, emailRouter);
 v1.use("/anomaly", publicLimiter, anomalyRouter);
-v1.use("/anomaly", ipWhitelist, adminLimiter, requireAdminBearer, requestSigning, anomalyAdminRouter);
+v1.use(
+  "/anomaly",
+  ipWhitelist,
+  adminLimiter,
+  requireAdminBearer,
+  requestSigning,
+  anomalyAdminRouter,
+);
 v1.use("/scoring/formulas", ipWhitelist, adminLimiter, requestSigning, scoringFormulasRouter);
 v1.use("/chains", publicLimiter, adminLimiter, chainsRouter);
 v1.use("/satellite-sources", ipWhitelist, adminLimiter, requestSigning, satelliteSourcesRouter);
@@ -534,7 +541,7 @@ const serverPromise = initializeBenchmarkSamples().then(async (sampleSize) => {
       resolve(server);
     });
     server.on("error", (err: NodeJS.ErrnoException) => {
-      logger.error("[startup] HTTP server bind failed", logger.formatError(err));
+      handleListenError(err, PORT);
       reject(err);
     });
   });
