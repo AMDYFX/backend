@@ -122,6 +122,8 @@ describe("runTxQueueRetry", () => {
       forest_density_pct: 70,
       ndvi_score: 0.7,
       timestamp: Date.now(),
+      source: "test",
+      dataSource: "live" as const,
     });
     mockComputeScores.mockReturnValue({
       credit_quality: 75,
@@ -151,6 +153,8 @@ describe("runTxQueueRetry", () => {
       forest_density_pct: 70,
       ndvi_score: 0.7,
       timestamp: Date.now(),
+      source: "test",
+      dataSource: "live" as const,
     });
     mockComputeScores.mockReturnValue({
       credit_quality: 75,
@@ -179,6 +183,8 @@ describe("runTxQueueRetry", () => {
       forest_density_pct: 70,
       ndvi_score: 0.7,
       timestamp: Date.now(),
+      source: "test",
+      dataSource: "live" as const,
     });
     mockComputeScores.mockReturnValue({
       credit_quality: 75,
@@ -186,7 +192,9 @@ describe("runTxQueueRetry", () => {
     });
     mockGenerateIdempotencyKey.mockReturnValue("idempotency-key-1");
     mockCheckIdempotency.mockReturnValue({ isDuplicate: false });
-    mockUpdateImpactScore.mockRejectedValue(new DuplicateSubmissionError("Already submitted"));
+    mockUpdateImpactScore.mockRejectedValue(
+      new DuplicateSubmissionError("Already submitted", Date.now()),
+    );
 
     await runTxQueueRetry();
 
@@ -207,6 +215,8 @@ describe("runTxQueueRetry", () => {
       forest_density_pct: 70,
       ndvi_score: 0.7,
       timestamp: Date.now(),
+      source: "test",
+      dataSource: "live" as const,
     });
     mockComputeScores.mockReturnValue({
       credit_quality: 75,
@@ -244,6 +254,8 @@ describe("runTxQueueRetry", () => {
       forest_density_pct: 70,
       ndvi_score: 0.7,
       timestamp: Date.now(),
+      source: "test",
+      dataSource: "live" as const,
     });
     mockComputeScores.mockReturnValue({
       credit_quality: 75,
@@ -280,6 +292,8 @@ describe("runTxQueueRetry", () => {
       forest_density_pct: 70,
       ndvi_score: 0.7,
       timestamp: Date.now(),
+      source: "test",
+      dataSource: "live" as const,
     });
     mockComputeScores.mockReturnValue({
       credit_quality: 75,
@@ -311,6 +325,8 @@ describe("runTxQueueRetry", () => {
       forest_density_pct: 70,
       ndvi_score: 0.7,
       timestamp: Date.now(),
+      source: "test",
+      dataSource: "live" as const,
     });
     mockComputeScores.mockReturnValue({
       credit_quality: 75,
@@ -343,6 +359,8 @@ describe("runTxQueueRetry", () => {
       forest_density_pct: 70,
       ndvi_score: 0.7,
       timestamp: Date.now(),
+      source: "test",
+      dataSource: "live" as const,
     });
     mockComputeScores.mockReturnValue({
       credit_quality: 75,

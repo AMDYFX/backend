@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import cron, { ScheduledTask } from "node-cron";
 import { config, initEnv } from "./config";
+import { getTotalProjects } from "./lib/registry";
 import swaggerUi from "swagger-ui-express";
 import iotRouter from "./routes/iot";
 import adminRouter from "./routes/admin";
