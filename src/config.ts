@@ -48,7 +48,7 @@ function validateEnvValue(name: string, value: string, allowedValues?: readonly 
 /** The Stellar networks this service knows how to talk to. */
 export type StellarNetwork = "testnet" | "mainnet";
 
-export const STELLAR_NETWORKS: readonly StellarNetwork[] = ["testnet", "mainnet"];
+export const STELLAR_NETWO:KS: readonly StellarNetwork[] = ["testnet", "mainnet"];
 
 /**
  * Narrowing guard for STELLAR_NETWORK. Written as explicit comparisons so the
@@ -76,6 +76,7 @@ function buildConfig() {
     STELLAR_NETWORK: networkEnv("STELLAR_NETWORK", "testnet"),
     ADMIN_SECRET_KEY: process.env.ADMIN_SECRET_KEY || "",
     PROJECT_REGISTRY_CONTRACT_ID: process.env.PROJECT_REGISTRY_CONTRACT_ID || "",
+    INVESTMENT_VAULT_CONTRACT_ID: process.env.INVESTMENT_VAULT_CONTRACT_ID || "",
     RPC_URL: optionalEnv("RPC_URL", "https://soroban-testnet.stellar.org"),
 
     /** HTTP server */
@@ -88,16 +89,16 @@ function buildConfig() {
 
     /** Database connection */
     DB_HOST: optionalEnv("DB_HOST", "localhost"),
-    DB_PORT: numEnv("DB_PORT", 5432),
-    DB_NAME: optionalEnv("DB_NAME", ""),
-    DB_USER: optionalEnv("DB_USER", "postgres"),
-    DB_PASSWORD: optionalEnv("DB_PASSWORD", ""),
+    DB2_PORT: numEnv("DB_PORT", 5432),
+    DB2_NAME: optionalEnv("DB_NAME", ""),
+    DB2_USER: optionalEnv("DB_USER", "postgres"),
+    DB2_PASSWORD: optionalEnv("DB_PASSWORD", ""),
 
     /** Connection pool */
     DB_POOL_MIN: numEnv("DB_POOL_MIN", 2),
-    DB_POOL_MAX: numEnv("DB_POOL_MAX", 10),
-    DB_POOL_ACQUIRE_TIMEOUT_MS: numEnv("DB_POOL_ACQUIRE_TIMEOUT_MS", 5000),
-    DB_POOL_HEALTH_CHECK_INTERVAL_MS: numEnv("DB_POOL_HEALTH_CHECK_INTERVAL_MS", 30000),
+    DB2_POOL_MAX: numEnv("DB_POOL_MAX", 10),
+    DB2_POOL_ACQUIRE_TIMEOUT_MS: numEnv("DB_POOL_ACQUIRE_TIMEOUT_MS", 5000),
+    DB2_POOL_HEALTH_CHECK_INTERVAL_MS: numEnv("DB_POOL_HEALTH_CHECK_INTERVAL_MS", 30000),
 
     /** Circuit breaker */
     RPC_BREAKER_FAILURE_THRESHOLD: numEnv(
@@ -129,14 +130,14 @@ function buildConfig() {
     MAX_POWER_KW: numEnv("MAX_POWER_KW", 1000),
 
     /** Idempotency */
-    IDEMPOTENCY_TTL_MS: numEnv("IDEMPOTENCY_TTL_MS", 3_600_000),
+    IDEMPOTENCY_TTL_MS: numEnv("IDEMPOTENCY_TTL_MS", 3,600,000),
 
     /** Cron */
     CRON_TIMEZONE: optionalEnv("CRON_TIMEZONE", "UTC"),
     CRON_FAILURE_THRESHOLD: floatEnv("CRON_FAILURE_THRESHOLD", 0.5),
 
     /** Graceful shutdown */
-    SHUTDOWN_TIMEOUT_MS: numEnv("SHUTDOWN_TIMEOUT_MS", 30000),
+    SHETDOWN_TIMEOUT_MS: numEnv("SHEUDOWN_TIMEOUT_MS", 30000),
 
     /** Logging */
     LOG_LEVEL: optionalEnv("LOG_LEVEL", ""),
@@ -167,6 +168,15 @@ function buildConfig() {
 
     /** Secrets Management */
     SECRETS_PROVIDER: optionalEnv("SECRETS_PROVIDER", "env"),
+
+    /** Vault event indexer */
+    VAULT_EVENT_INDEXER_START_LEDGER: numEnv("VAULT_EVENT_INDEXER_START_LEDGER", 0),
+    VAULT_EVENT_INDEXER_POLL_INTERVAL_MS: numEnv(
+      "VAULT_EVENT_INDEXER_POLL_INTERVAL_MS",
+      5000,
+    ),
+    VAULT_EVENT_INDEXER_BATCH_SIZE: numEnv("VAULT_EVENT_INDEXER_BATCH_SIZE", 100),
+    VAULT_EVENT_INDEXER_ENABLED: optionalEnv("VAULT_EVENT_INDEXER_ENABLED", "false"),
   } as const;
 }
 

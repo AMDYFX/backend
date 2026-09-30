@@ -8,12 +8,37 @@ import {
   calculatePaybackPeriod,
 } from "../lib/financial";
 import { getAuditLog } from "../lib/audit";
-import { badRequest, maxProjectId } from "../middleware/errors";
+import { ApiError, badRequest, maxProjectId } from "../middleware/errors";
+import {
+  buildImpactCertificate,
+  certificatePdf,
+  getImpactCertificatePublicKey,
+} from "../lib/impactCertificate";
+import { indexer } from "../lib/indexer";
 
 const CARBON_OFFSET_FACTOR = 0.05;
 const CARBON_CREDIT_FACTOR = 0.5;
+const DEFAULT_ACTIVITY_LIMIT = 50;
+const MAX_ACTIVITY_LIMIT = 200;
 
 const router = Router();
+
+function validPeriod(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-Q[1-4]$/.test(value);
+}
+
+function assertCertificateAccess(req: Request, address: string): void {
+  const wallet = req.header("x-wallet-address")?.trim();
+  const adminKey = req.header("x-admin-api-key");
+  const configuredAdminKey = process.env.ADMIN_API_KEY;
+  if (wallet !== address && (!configuredAdminKey || adminKey !== configuredAdminKey)) {
+    throw new ApiError(
+      403,
+      "forbidden",
+      "Only the wallet owner or an administrator may fetch an impact certificate.",
+    );
+  }
+}
 
 // Helper to collect all project details deterministically
 async function getPortfolioData() {
@@ -88,6 +113,92 @@ router.get("/dashboard", async (_req: Request, res: Response, next: NextFunction
   }
 });
 
+// GET /:address/activity — per-investor vault activity feed
+router.get("/:address/activity", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const address = String(req.params.address).trim();
+    if (!address || address.length > 128) throw badRequest("address must be a non-empty wallet address");
+
+    const cursorRaw = req.query.cursor;
+    if (cursorRaw !== undefined && typeof cursorRaw !== "string") {
+      throw badRequest("cursor must be a string");
+    }
+    const cursor = typeof cursorRaw === "string" && cursorRaw.trim() ? cursorRaw.trim() : null;
+
+    const limitRaw = req.query.limit;
+    let limit = DEFAULT_ACTIVITY_LIMIT;
+    if (limitRaw !== undefined) {
+      const parsed = Number(limitRaw);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_ACTIVITY_LIMIT) {
+        throw badRequest(`limit must be an integer between 1 and ${MAX_ACTIVITY_LIMIT}`);
+      }
+      limit = parsed;
+    }
+
+    const page = await indexer.getActivity(address, cursor, limit);
+    res.json({
+      address,
+      events: page.events,
+      next_cursor: page.next_cursor,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /:address/pending-withdrawals — queued claims not yet claimed
+router.get("/:address/pending-withdrawals", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const address = String(req.params.address).trim();
+    if (!address || address.length > 128) throw badRequest("address must be a non-empty wallet address");
+
+    const pending = await indexer.getPendingWithdrawals(address);
+    res.json({ address, pending_withdrawals: pending });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /:address/impact-certificate — verifiable investor impact certificate
+router.get(
+  "/:address/impact-certificate",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const address = String(req.params.address).trim();
+      const period = req.query.period;
+      const format = req.query.format === undefined ? "json" : req.query.format;
+      if (!address || address.length > 128)
+        throw badRequest("address must be a non-empty wallet address");
+      if (!validPeriod(period)) throw badRequest("period must use YYYY-Q1 through YYYY-Q4 format");
+      if (format !== "json" && format !== "pdf") throw badRequest("format must be json or pdf");
+      assertCertificateAccess(req, address);
+
+      const portfolio = await getPortfolioData();
+      const projects = portfolio.map((project) => ({
+        id: project.id,
+        power_output_kw: project.solar.power_output_kw,
+        funding: project.funding,
+        certified: project.id % 3 !== 0,
+        certification_status: project.id % 3 !== 0 ? "certified" : "uncertified",
+        contract_id: `project_registry:project-${project.id}`,
+        ledger: project.id,
+        data_source_id: `iot:solar:${project.id}`,
+      }));
+      const certificate = buildImpactCertificate(address, period, projects);
+      if (format === "pdf") {
+        res
+          .type("application/pdf")
+          .set("Content-Disposition", `attachment; filename="${certificate.certificate_id}.pdf"`)
+          .send(certificatePdf(certificate));
+        return;
+      }
+      res.json(certificate);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 // GET /performance-report — Performance Reports
 router.get("/performance-report", async (_req: Request, res: Response, next: NextFunction) => {
   try {
@@ -130,7 +241,7 @@ router.get("/financial-summary", async (_req: Request, res: Response, next: Next
 
       // ROI = Net benefit over lifetime / installation cost
       const lifetimeYears = input.project_lifetime_years;
-      const totalBenefits = npvResult.discounted_cash_flows.reduce(
+      const totalBenefits = npvResult.discounted cash flows.reduce(
         (acc, cf) => acc + cf.revenue,
         0,
       );
@@ -198,7 +309,7 @@ router.get("/compliance-report", async (_req: Request, res: Response, next: Next
   try {
     const portfolio = await getPortfolioData();
     const reports = portfolio.map((p) => {
-      // ESG status based on credit quality and green impact
+      // EGG status based on credit quality and green impact
       const score = (p.scores.credit_quality + p.scores.green_impact) / 2;
       let status: "Compliant" | "Warning" | "Non-Compliant" = "Compliant";
       if (score < 50) {
@@ -208,7 +319,9 @@ router.get("/compliance-report", async (_req: Request, res: Response, next: Next
       }
 
       // Carbon credits: simulated registry entry
-      const carbonCredits = Math.round(p.solar.power_output_kw * p.scores.green_impact * CARBON_CREDIT_FACTOR);
+      const carbonCredits = Math.round(
+        p.solar.power_output_kw * p.scores.green_impact * CARBON_CREDIT_FACTOR,
+      );
 
       return {
         project_id: p.id,
@@ -270,82 +383,34 @@ router.post("/custom-report", async (req: Request, res: Response, next: NextFunc
       }
       const validSections = ["financials", "performance", "compliance", "scores"];
       if (!sections.every((s) => typeof s === "string" && validSections.includes(s))) {
-        throw badRequest(`sections must contain only: ${validSections.join(", ")}`);
+        throw badRequest(`sections must only contain: ${validSections.join(", ")}`);
       }
     }
 
     const portfolio = await getPortfolioData();
-    const filterIds = project_ids as number[] | undefined;
-    const filterSections = (sections as string[] | undefined) ?? ["scores"];
+    const selected =
+      Array.isArray(project_ids) && project_ids.length > 0
+        ? portfolio.filter((p) => project_ids.includes(p.id))
+        : portfolio;
 
-    const filteredPortfolio = filterIds
-      ? portfolio.filter((p) => filterIds.includes(p.id))
-      : portfolio;
-
-    const reportProjects = filteredPortfolio.map((p) => {
-      const pReport: any = { project_id: p.id };
-
-      if (filterSections.includes("scores")) {
-        pReport.scores = {
-          credit_quality: p.scores.credit_quality,
-          green_impact: p.scores.green_impact,
-        };
+    const result = selected.map((p) => {
+      const out: Record<string, unknown> = { project_id: p.id };
+      if (!sections || sections.includes("financials")) {
+        out.funding = p.funding;
       }
-
-      if (filterSections.includes("performance")) {
-        let status: "Optimal" | "Underperforming" | "Critical" = "Optimal";
-        if (p.actual_vs_expected_ratio < 0.8) {
-          status = "Critical";
-        } else if (p.actual_vs_expected_ratio < 0.95) {
-          status = "Underperforming";
-        }
-
-        pReport.performance = {
-          efficiency_pct: p.solar.efficiency_pct,
-          power_output_kw: p.solar.power_output_kw,
-          actual_vs_expected_ratio: Math.round(p.actual_vs_expected_ratio * 100) / 100,
-          performance_status: status,
-        };
+      if (!sections || sections.includes("performance")) {
+        out.actual_vs_expected_ratio = Math.round(p.actual_vs_expected_ratio * 100) / 100;
       }
-
-      if (filterSections.includes("financials")) {
-        const input = createDefaultFinancialInput(p.solar.max_power_kw, p.solar.efficiency_pct);
-        const npvResult = calculateNPV(input);
-        const paybackResult = calculatePaybackPeriod(input);
-
-        pReport.financials = {
-          installation_cost: Math.round(input.installation_cost * 100) / 100,
-          npv: Math.round(npvResult.npv * 100) / 100,
-          payback_period_years: paybackResult.reaches_payback
-            ? Math.round(paybackResult.payback_years * 10) / 10
-            : null,
-        };
+      if (!sections || sections.includes("compliance")) {
+        out.green_impact = p.scores.green_impact;
       }
-
-      if (filterSections.includes("compliance")) {
-        const score = (p.scores.credit_quality + p.scores.green_impact) / 2;
-        let status: "Compliant" | "Warning" | "Non-Compliant" = "Compliant";
-        if (score < 50) {
-          status = "Non-Compliant";
-        } else if (score < 70) {
-          status = "Warning";
-        }
-
-        pReport.compliance = {
-          green_impact: p.scores.green_impact,
-          compliance_status: status,
-          carbon_credits_issued: Math.round(p.solar.power_output_kw * p.scores.green_impact * 0.5),
-        };
+      if (!sections || sections.includes("scores")) {
+        out.scores = p.scores;
       }
-
-      return pReport;
+      return out;
     });
 
-    res.json({
-      generated_at: Date.now(),
-      project_count: reportProjects.length,
-      projects: reportProjects,
-    });
+    res.json({ generated_at: Date.now(), projects: result });
   } catch (error) {
     next(error);
   }
