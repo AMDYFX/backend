@@ -1,6 +1,8 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { badRequest, errorBody, parseOptionalInt, maxProjectId } from "../middleware/errors";
 import { recordAudit, getAuditLog, auditToCsv } from "../lib/audit";
+import { writeAuditLog } from "../lib/audit-logger";
+import { getCorrelationId } from "../lib/correlation";
 import { broadcastScoreUpdate } from "../lib/websocket";
 import { tryBeginUpdate, markCompleted, markFailed } from "../lib/duplicate-detection";
 import { withProjectLock } from "../lib/request-queue";
@@ -157,10 +159,26 @@ function parseProjectIds(body: unknown): number[] | null {
 // forwarded to the central errorHandler via next() so status codes stay consistent
 // across all endpoints. The nested per-project catch is intentional: it collects
 // partial failures without aborting the entire batch.
+function auditUpdateScores(
+  req: Request,
+  projectIds: number[],
+  outcome: { success: boolean; results?: unknown; error?: string },
+): void {
+  writeAuditLog({
+    action: "admin.update-scores",
+    correlation_id: getCorrelationId(),
+    ip: req.ip ?? null,
+    user_agent: req.get("user-agent") ?? null,
+    project_ids: projectIds,
+    ...outcome,
+  });
+}
+
 router.post(
   "/update-scores",
   requireApiKeyRole("admin:write"),
   async (req: Request, res: Response, next: NextFunction) => {
+    let auditedIds: number[] = [];
     try {
       const requested = parseProjectIds(req.body);
       let projectIds: number[];
@@ -171,6 +189,7 @@ router.post(
         const total = await getTotalProjects();
         projectIds = Array.from({ length: total }, (_, i) => i + 1);
       }
+      auditedIds = projectIds;
 
       const results: ScoreUpdateResult[] = [];
       const errors: Array<{ project_id: number; error: { code: string; message: string } }> = [];
@@ -264,8 +283,20 @@ router.post(
         }
       }
 
+      auditUpdateScores(req, projectIds, {
+        success: errors.length === 0,
+        results: {
+          updated: results.map((r) => r.project_id),
+          failed: errors.map((e) => e.project_id),
+          skipped: skipped.map((k) => k.project_id),
+        },
+      });
       res.json({ updated: results.length, results, errors, skipped });
     } catch (error) {
+      auditUpdateScores(req, auditedIds, {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
       next(error);
     }
   },
