@@ -4,9 +4,6 @@ import { logger } from "./logger";
 import { pool } from "./db";
 import { config } from "../config";
 import { ApiError } from "../middleware/errors";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 export type VaultEventType =
   "deposit" | "withdraw" | "WithdrawQueued" | "WithdrawClaimed" | "YieldClaimed";
