@@ -17,7 +17,12 @@ describe("TypeScript Strict Improvements (Issue #287)", () => {
         .filter(Boolean)
         .filter((file) => {
           // Allow 'as const' assertions
-          const content = fs.readFileSync(file, "utf-8");
+          // Comments are stripped first so prose like "returned as a string" is not
+          // mistaken for a type assertion.
+          const content = fs
+            .readFileSync(file, "utf-8")
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/(^|\s)\/\/.*$/gm, "");
           const hasNonConstAs = / as (?!const\b)/.test(content);
           return hasNonConstAs;
         });
