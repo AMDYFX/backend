@@ -75,5 +75,6 @@ function spawnSyncWithEnv(env: Record<string, string>, args: string[]) {
     cwd: repoRoot,
     env: { ...process.env, TS_NODE_TRANSPILE_ONLY: "true", ...env },
     encoding: "utf8",
+    timeout: 30_000,
   });
 }
