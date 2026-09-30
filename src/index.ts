@@ -79,6 +79,7 @@ import { compressionMiddleware, getCompressionMetrics } from "./middleware/compr
 import { handleListenError } from "./lib/listen-errors";
 import { initBenchmarkSamples } from "./lib/benchmarking";
 import { createBenchmarkSampleInitializer } from "./lib/benchmarkStartup";
+import { getImpactCertificatePublicKey } from "./lib/impactCertificate";
 
 const env = initEnv();
 
@@ -204,6 +205,10 @@ app.use(featureFlagContext);
 
 // ── Liveness ────────────────────────────────────────────────────────────────
 app.get("/health", async (_req, res) => res.json(await getHealth()));
+
+app.get("/.well-known/heliobond-impact-key", (_req, res) => {
+  res.json({ algorithm: "Ed25519", public_key: getImpactCertificatePublicKey() });
+});
 
 // ── Prometheus metrics ──────────────────────────────────────────────────────
 app.get("/metrics", async (_req, res) => {
