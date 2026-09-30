@@ -97,3 +97,38 @@ export function getLogLevel(): LogLevel {
 export function getLogLevels(): Record<LogLevel, number> {
   return { ...LEVEL_RANK };
 }
+
+
+let currentLevel: string | null = null;
+
+function getConfiguredLevel(): string {
+  if (currentLevel !== null) return currentLevel; // Cache hit
+
+  const raw = process.env.LOG_LEVEL;
+  let level: string;
+
+  if (raw && isValidLogLevel(raw)) {
+    level = raw.toLowerCase();
+  } else if (process.env.NODE_ENV === 'test') {
+    level = 'silent';
+  } else if (process.env.NODE_ENV === 'production') {
+    level = 'info';
+  } else {
+    level = 'debug';
+  }
+
+  currentLevel = level; // Populate cache
+  return currentLevel;
+}
+
+export function setLogLevel(newLevel: string): void {
+  if (!isValidLogLevel(newLevel)) {
+    throw new Error(`Invalid log level: ${newLevel}`);
+  }
+  currentLevel = newLevel.toLowerCase(); // Updates/invalidates existing cache
+}
+
+// Optional helper for test cleanup/resets
+export function clearLogLevelCache(): void {
+  currentLevel = null;
+}
