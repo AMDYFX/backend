@@ -78,7 +78,8 @@ jobs:
         run: bun run api-client:build
 
       - name: Smoke-test client import
-        run: node --input-type=module -e "import { createApiClient } from './packages/api-client/dist/index.js'; createApiClient({ baseUrl: 'http://localhost' })"
+        run: |
+          node --input-type=module -e "import { createApiClient } from './packages/api-client/dist/index.js'; createApiClient({ baseUrl: 'http://localhost' })"
 
   codeql:
     runs-on: ubuntu-latest
