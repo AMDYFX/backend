@@ -27,6 +27,7 @@ import forecastRouter from "./routes/forecast";
 import maintenanceRouter from "./routes/maintenance";
 import investorRouter from "./routes/investor";
 import apiKeysRouter from "./routes/apiKeys";
+import oracleStatusRouter from "./routes/oracle-status";
 import { createHandler } from "graphql-http/lib/use/express";
 import { graphqlSchema, graphqlRoot, createGraphQLContext } from "./graphql/schema";
 import { startGrpcServer } from "./grpc/server";
@@ -328,6 +329,7 @@ v1.use("/financial", publicLimiter, apiKeyAuth, financialRouter);
 v1.use("/forecast", publicLimiter, forecastRouter);
 v1.use("/maintenance", publicLimiter, apiKeyAuth, maintenanceRouter);
 v1.use("/investor", publicLimiter, investorRouter);
+v1.use("/status/oracle", publicLimiter, oracleStatusRouter);
 v1.use("/admin/api-keys", ipWhitelist, adminLimiter, requestSigning, apiKeysRouter);
 
 // ── Legacy /api paths (deprecated) ──────────────────────────────────────────
